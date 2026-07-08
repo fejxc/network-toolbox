@@ -6,6 +6,12 @@
 python3 zjlib_wifi_login.py
 ```
 
+也可以直接运行 shell wrapper：
+
+```bash
+./login.sh
+```
+
 脚本默认读取 `.env`：
 
 ```bash
@@ -29,6 +35,7 @@ python3 zjlib_wifi_login.py --status
 python3 zjlib_wifi_login.py --debug
 python3 zjlib_wifi_login.py --url https://2.2.1.1:8443/cn/index.html
 python3 zjlib_wifi_login.py --timeout 10
+./login.sh --debug
 ```
 
 `--debug` 会打印识别到的登录页、提交地址和字段名，并保存调试 HTML。脚本按 `/cn/login.html` 中 `submitFunc()` 的 Mac 分支发送字段：`username`、`password`、`RedirectUrl`、`anonymous`、`anonymousurl`、`checkbox`、`checkbox1`、`accesscode`。
