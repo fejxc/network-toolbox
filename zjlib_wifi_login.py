@@ -8,7 +8,6 @@ import http.client
 import html.parser
 import os
 import re
-import socket
 import ssl
 import sys
 import urllib.error
@@ -103,7 +102,17 @@ def request_text(
     data: bytes | None = None,
     referer: str | None = None,
     timeout: float = 10,
-) -> tuple[int, str, str]:
+    return_headers: bool = False,
+    extra_headers: dict[str, str] | None = None,
+):
+    """Fetch ``url`` via ``opener``.
+
+    Returns ``(status, final_url, body)``; when ``return_headers`` is set, also
+    appends a fourth ``headers`` element (a ``dict``) for debugging.
+
+    Non-2xx responses (e.g. 404 when already authenticated) are returned as a
+    normal triple instead of raising, so callers can branch on status.
+    """
     headers = {
         "User-Agent": "Mozilla/5.0 zjlib-wifi-login/2.0",
         "Accept": "text/html,application/xhtml+xml,application/xml,*/*",
@@ -115,88 +124,35 @@ def request_text(
         headers["Referer"] = referer
     if data is not None:
         headers["Content-Type"] = "application/x-www-form-urlencoded"
+    if extra_headers:
+        headers.update(extra_headers)
 
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with opener.open(req, timeout=timeout) as resp:
             body = resp.read()
             charset = resp.headers.get_content_charset() or "utf-8"
-            return resp.status, resp.geturl(), body.decode(charset, errors="replace")
+            decoded = body.decode(charset, errors="replace")
+            result = (resp.status, resp.geturl(), decoded)
+            resp_headers = {k: v for k, v in resp.headers.items()}
+    except urllib.error.HTTPError as exc:
+        # Treat non-2xx (e.g. 404 when already online) as a normal response so the
+        # caller's status check can handle it instead of crashing the whole run.
+        decoded = ""
+        resp_headers = {}
+        try:
+            raw = exc.read()
+            decoded = raw.decode(exc.headers.get_content_charset() or "utf-8", errors="replace")
+            resp_headers = {k: v for k, v in exc.headers.items()}
+        except Exception:
+            pass
+        result = (exc.code, exc.filename or url, decoded)
     except http.client.RemoteDisconnected as exc:
         raise urllib.error.URLError(exc) from exc
 
-
-def cookie_header(cookie_jar: CookieJar, url: str) -> str:
-    parsed = urllib.parse.urlparse(url)
-    host = parsed.hostname or ""
-    pairs = []
-    for cookie in cookie_jar:
-        domain = cookie.domain.lstrip(".")
-        if domain and host != domain and not host.endswith("." + domain):
-            continue
-        pairs.append(f"{cookie.name}={cookie.value}")
-    return "; ".join(pairs)
-
-
-def raw_post_text(
-    url: str,
-    data: bytes,
-    *,
-    referer: str,
-    cookie_jar: CookieJar,
-    timeout: float,
-) -> tuple[int, str, str]:
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise ValueError(f"只支持 HTTPS POST: {url}")
-
-    port = parsed.port or 443
-    path = urllib.parse.urlunparse(("", "", parsed.path or "/", parsed.params, parsed.query, ""))
-    headers = [
-        f"POST {path} HTTP/1.1",
-        f"Host: {parsed.hostname}:{port}",
-        "User-Agent: Mozilla/5.0 zjlib-wifi-login/2.1",
-        "Accept: */*",
-        "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8",
-        "Content-Type: application/x-www-form-urlencoded",
-        f"Content-Length: {len(data)}",
-        f"Referer: {referer}",
-        "Origin: https://2.2.1.1:8443",
-        "Connection: close",
-    ]
-    cookies = cookie_header(cookie_jar, url)
-    if cookies:
-        headers.append(f"Cookie: {cookies}")
-
-    request = ("\r\n".join(headers) + "\r\n\r\n").encode("iso-8859-1") + data
-    context = ssl._create_unverified_context()
-    with socket.create_connection((parsed.hostname, port), timeout=timeout) as sock:
-        with context.wrap_socket(sock, server_hostname=parsed.hostname) as tls:
-            tls.settimeout(timeout)
-            tls.sendall(request)
-            response = bytearray()
-            while True:
-                chunk = tls.recv(8192)
-                if not chunk:
-                    break
-                response.extend(chunk)
-
-    raw = bytes(response)
-    if not raw:
-        raise urllib.error.URLError("网关断开连接且没有返回任何响应")
-    if b"\r\n\r\n" in raw:
-        head, body = raw.split(b"\r\n\r\n", 1)
-    elif b"\n\n" in raw:
-        head, body = raw.split(b"\n\n", 1)
-    else:
-        head, body = raw, b""
-
-    status_line = head.splitlines()[0].decode("iso-8859-1", errors="replace")
-    match = re.match(r"HTTP/\S+\s+(\d+)", status_line)
-    if not match:
-        raise urllib.error.URLError(f"网关返回了无法解析的状态行: {status_line!r}")
-    status = int(match.group(1))
-    return status, url, body.decode("utf-8", errors="replace")
+    if return_headers:
+        return (*result, resp_headers)
+    return result
 
 
 def parse_html(html: str) -> PortalParser:
@@ -347,7 +303,15 @@ def login(
 
     status, final_entry_url, entry_html = request_text(opener, entry_url, timeout=timeout)
     if status != 200:
-        print(f"入口页异常: HTTP {status} {final_entry_url}", file=sys.stderr)
+        if status == 404:
+            print(
+                f"认证门户返回 404: {final_entry_url}\n"
+                "  门户只在「未认证」状态下伺服登录页。若你当前已能正常上网，说明已认证，无需重复登录；\n"
+                "  若确实无法上网，请确认: 1) 已连接 zjlib Wi-Fi;  2) 关闭代理/TUN/VPN 后重试;  3) 入口 URL 正确。",
+                file=sys.stderr,
+            )
+        else:
+            print(f"入口页异常: HTTP {status} {final_entry_url}", file=sys.stderr)
         return 2
 
     login_page = find_login_page(final_entry_url, entry_html)
@@ -380,6 +344,8 @@ def login(
         print(f"登录页: {final_login_url}")
         print(f"提交到: {method} {action_url}")
         print("字段: " + ", ".join(sorted(payload.keys())))
+        if method == "POST" and encoded is not None:
+            print(f"请求体: {encoded.decode('utf-8')}")
         save_debug("zjlib_login_page_debug.html", login_html)
         if show_inputs:
             print("表单控件:")
@@ -392,23 +358,16 @@ def login(
         encoded = None
 
     try:
-        if method == "POST" and encoded is not None:
-            status, final_url, result = raw_post_text(
-                action_url,
-                encoded,
-                referer=final_login_url,
-                cookie_jar=cookie_jar,
-                timeout=timeout,
-            )
-        else:
-            status, final_url, result = request_text(
-                opener,
-                action_url,
-                method=method,
-                data=encoded,
-                referer=final_login_url,
-                timeout=timeout,
-            )
+        status, final_url, result, resp_headers = request_text(
+            opener,
+            action_url,
+            method=method,
+            data=encoded,
+            referer=final_login_url,
+            timeout=timeout,
+            return_headers=True,
+            extra_headers={"Origin": "https://2.2.1.1:8443"} if method == "POST" else None,
+        )
     except urllib.error.URLError as exc:
         if debug:
             save_debug("zjlib_login_page_debug.html", login_html)
@@ -418,6 +377,12 @@ def login(
         return 2
     if debug:
         save_debug("zjlib_login_result_debug.html", result)
+        print(f"响应状态: HTTP {status}")
+        print("响应头:")
+        for k, v in resp_headers.items():
+            print(f"  {k}: {v}")
+        body_preview = re.sub(r"\s+", " ", result).strip()[:500]
+        print(f"响应体摘要: {body_preview}")
 
     if status not in (200, 302):
         print(f"登录请求异常: HTTP {status} {final_url}", file=sys.stderr)
@@ -432,7 +397,7 @@ def login(
         print(f"登录请求已提交，结果看起来成功: {final_url}")
         return 0
 
-    brief = re.sub(r"\\s+", " ", result).strip()[:300]
+    brief = re.sub(r"\s+", " ", result).strip()[:300]
     print(f"登录请求已提交，但未识别为成功。返回摘要: {brief}", file=sys.stderr)
     if debug:
         print("已保存 zjlib_login_result_debug.html", file=sys.stderr)
