@@ -1,5 +1,6 @@
 .env
 .env.zstu
+.DS_Store
 __pycache__/
 *.pyc
 zjlib_*_debug.html

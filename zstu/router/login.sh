@@ -21,7 +21,7 @@ ZSTU_WIFI_OPERATOR_PASSWORD=${ZSTU_WIFI_OPERATOR_PASSWORD:-}
 ZSTU_WIFI_VALIDCODE=${ZSTU_WIFI_VALIDCODE:-}
 
 if [ -f "$CONFIG" ]; then
-  # 配置文件是用户自己创建的 shell 变量文件，示例见 README_ZSTU.md。
+  # 配置文件是用户自己创建的 shell 变量文件，示例见 zstu/README.md。
   . "$CONFIG"
 fi
 

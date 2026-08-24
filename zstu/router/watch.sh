@@ -8,7 +8,7 @@ CONFIG=${ZSTU_ROUTER_CONFIG:-/etc/storage/zstu_wifi.conf}
 if [ -f "$CONFIG" ]; then
   . "$CONFIG"
 fi
-LOGIN_SCRIPT=${ZSTU_ROUTER_LOGIN_SCRIPT:-$SCRIPT_DIR/zstu_wifi_login_router.sh}
+LOGIN_SCRIPT=${ZSTU_ROUTER_LOGIN_SCRIPT:-$SCRIPT_DIR/login.sh}
 INTERVAL=${ZSTU_WIFI_CHECK_INTERVAL:-60}
 
 [ -x "$LOGIN_SCRIPT" ] || {

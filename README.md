@@ -50,3 +50,7 @@ python3 zjlib_wifi_login.py --timeout 10
 `--debug` 会打印识别到的登录页、提交地址、字段名、**完整请求体、响应状态/头/体摘要**，并保存调试 HTML。脚本按 `/cn/login.html` 中 `submitFunc()` 的 Mac 分支发送字段：`username`、`password`、`RedirectUrl`、`anonymous`、`anonymousurl`、`checkbox`、`checkbox1`、`accesscode`。
 
 > 注意：`--debug` 的请求体会以明文打印账号密码，分享输出前请先打码。
+
+## 浙江理工大学校园网
+
+浙江理工大学 ePortal 的 Mac 版、路由器版和自动重登说明见 [zstu/README.md](zstu/README.md)。
