@@ -431,7 +431,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    load_dotenv(Path(__file__).with_name(".env"))
+    script_dir = Path(__file__).resolve().parent
+    # Prefer a colocated config, then fall back to the repository-root .env so
+    # moving the library files into zjlib/ does not invalidate existing setup.
+    load_dotenv(script_dir / ".env")
+    load_dotenv(script_dir.parent / ".env")
     args = parse_args()
 
     if args.status:
