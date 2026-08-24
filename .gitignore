@@ -1,4 +1,5 @@
 .env
+.env.zstu
 __pycache__/
 *.pyc
 zjlib_*_debug.html

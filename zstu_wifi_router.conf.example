@@ -1,0 +1,14 @@
+# 复制到路由器 /etc/storage/zstu_wifi.conf，并按 shell 语法填写。
+# 账号密码只放配置文件，不要写入 zstu_wifi_login_router.sh。
+ZSTU_WIFI_USERNAME='your_username'
+ZSTU_WIFI_PASSWORD='your_password'
+
+# 推荐填当前未认证时浏览器跳转后的完整 URL；不填则尝试自动发现。
+# ZSTU_WIFI_URL='http://192.168.102.130/eportal/index.jsp?...当前查询参数...'
+
+# 当前门户通常为空；如果 getServices 要求选择服务，再填写实际值。
+ZSTU_WIFI_SERVICE=''
+
+# 可选
+# ZSTU_WIFI_TIMEOUT=30
+# ZSTU_WIFI_VALIDCODE=''
