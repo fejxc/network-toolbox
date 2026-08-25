@@ -4,3 +4,9 @@
 __pycache__/
 *.pyc
 zjlib_*_debug.html
+
+# MDPI monitor local secrets and state
+mdpi_monitor.env
+mdpi_monitor.cookie
+.mdpi-monitor-state.json
+mdpi/mdpi_monitor.log
