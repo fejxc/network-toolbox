@@ -60,14 +60,27 @@ chmod 600 /etc/storage/zstu_wifi.conf
 /etc/storage/zstu_wifi_login_router.sh
 ```
 
-如果希望路由器持续检测掉线并自动重登，再复制 [router/watch.sh](./router/watch.sh) 到 `/etc/storage/zstu_wifi_router_watch.sh`，然后运行：
+如果希望路由器持续检测掉线并自动重登，再复制 [router/login.sh](./router/login.sh)、[router/watch.sh](./router/watch.sh) 和 [router/start.sh](./router/start.sh) 到 `/etc/storage/`，然后运行：
 
 ```sh
 chmod 700 /etc/storage/zstu_wifi_router_watch.sh
-/etc/storage/zstu_wifi_router_watch.sh >/tmp/zstu_wifi_watch.log 2>&1 &
+chmod 700 /etc/storage/zstu_wifi_start.sh
+/etc/storage/zstu_wifi_start.sh
 ```
 
-它默认每 60 秒检查一次；可用 `ZSTU_WIFI_CHECK_INTERVAL=30` 改成 30 秒。HTTP 204 表示当前已在线，认证入口重定向回来时才提交登录；暂时断网则等待下一轮重试。要让它重启后自动运行，需要把启动命令加入该路由器固件的启动脚本/计划任务。
+它默认每 60 秒检查一次；可用 `ZSTU_WIFI_CHECK_INTERVAL=30` 改成 30 秒。脚本会检查多个普通外网探针，至少两个通过才跳过认证；单个 HTTP 204 不再被当作全网在线。检测输出会写入 `/tmp/zstu_wifi_watch.log`，并通过 `logger -t zstu_wifi` 写入路由器系统日志。要让它重启后自动运行，把下面这一行加入 `/etc/storage/started_script.sh`：
+
+```sh
+/etc/storage/zstu_wifi_start.sh
+```
+
+该 RM2100 固件没有 `logread`，系统日志由 `syslogd` 写入 `/tmp/syslog.log`；路由器后台的“系统日志”也应显示同一类记录。SSH 中可以这样查看对应日志：
+
+```sh
+grep zstu_wifi /tmp/syslog.log
+```
+
+如果脚本在系统启动时没有日志，优先检查 `zstu_wifi_start.sh` 是否存在、可执行，以及 `/etc/storage/started_script.sh` 是否确实包含这行。
 
 RM2100 的 `/etc/storage` 启动时会从 Storage 闪存分区恢复。通过 SSH 修改后必须执行：
 

@@ -9,8 +9,6 @@ set -eu
 CURL=${ZSTU_CURL:-/usr/sbin/curl}
 CONFIG=${ZSTU_ROUTER_CONFIG:-/etc/storage/zstu_wifi.conf}
 TMP_DIR=${TMPDIR:-/tmp}
-TIMEOUT=${ZSTU_WIFI_TIMEOUT:-30}
-DISCOVERY_URL=${ZSTU_WIFI_DISCOVERY_URL:-http://connectivitycheck.gstatic.com/generate_204}
 
 ZSTU_WIFI_USERNAME=${ZSTU_WIFI_USERNAME:-}
 ZSTU_WIFI_PASSWORD=${ZSTU_WIFI_PASSWORD:-}
@@ -24,6 +22,21 @@ if [ -f "$CONFIG" ]; then
   # 配置文件是用户自己创建的 shell 变量文件，示例见 zstu/README.md。
   . "$CONFIG"
 fi
+
+# 配置文件必须在派生变量计算之前加载，否则配置里的超时、探针地址和
+# curl 路径不会生效。
+CURL=${ZSTU_CURL:-/usr/sbin/curl}
+TIMEOUT=${ZSTU_WIFI_TIMEOUT:-30}
+PROBE_TIMEOUT=${ZSTU_WIFI_PROBE_TIMEOUT:-8}
+MIN_ONLINE_PROBES=${ZSTU_WIFI_MIN_ONLINE_PROBES:-2}
+DISCOVERY_URL=${ZSTU_WIFI_DISCOVERY_URL:-http://neverssl.com/}
+DISCOVERY_URL_2=${ZSTU_WIFI_DISCOVERY_URL_2:-http://captive.apple.com/hotspot-detect.html}
+DISCOVERY_URL_3=${ZSTU_WIFI_DISCOVERY_URL_3:-http://www.msftconnecttest.com/connecttest.txt}
+DISCOVERY_URL_4=${ZSTU_WIFI_DISCOVERY_URL_4:-http://connectivitycheck.gstatic.com/generate_204}
+PROBE_URL_1=${ZSTU_WIFI_PROBE_URL_1:-http://connectivitycheck.gstatic.com/generate_204}
+PROBE_URL_2=${ZSTU_WIFI_PROBE_URL_2:-http://captive.apple.com/hotspot-detect.html}
+PROBE_URL_3=${ZSTU_WIFI_PROBE_URL_3:-http://www.msftconnecttest.com/connecttest.txt}
+PROBE_URL_4=${ZSTU_WIFI_PROBE_URL_4:-http://example.com/}
 
 STATUS_ONLY=0
 DRY_RUN=0
@@ -70,7 +83,15 @@ PAGE_INFO="$TMP_DIR/zstu_wifi_page_info.$$"
 SERVICES="$TMP_DIR/zstu_wifi_services.$$"
 LOGIN_RESULT="$TMP_DIR/zstu_wifi_login.$$"
 ERROR_LOG="$TMP_DIR/zstu_wifi_error.$$"
-trap 'rm -f "$COOKIE_FILE" "$ENTRY_HTML" "$PAGE_INFO" "$SERVICES" "$LOGIN_RESULT" "$ERROR_LOG"' EXIT HUP INT TERM
+PROBE_BODY="$TMP_DIR/zstu_wifi_probe.$$"
+trap 'rm -f "$COOKIE_FILE" "$ENTRY_HTML" "$PAGE_INFO" "$SERVICES" "$LOGIN_RESULT" "$ERROR_LOG" "$PROBE_BODY"' EXIT HUP INT TERM
+
+case "$PROBE_TIMEOUT" in
+  ''|*[!0-9]*) die "ZSTU_WIFI_PROBE_TIMEOUT 必须是秒数" ;;
+esac
+case "$MIN_ONLINE_PROBES" in
+  ''|*[!0-9]*) die "ZSTU_WIFI_MIN_ONLINE_PROBES 必须是数字" ;;
+esac
 
 # 仅实现 encodeURIComponent 的 ASCII/UTF-8 字节路径。账号、密码和本门户
 # 查询参数通常都是 ASCII；如果配置里出现非 ASCII 字符，建议使用 Mac 版。
@@ -100,26 +121,102 @@ json_value() {
   sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" | head -n 1
 }
 
-ENTRY_URL=$ZSTU_WIFI_URL
-[ -n "$ENTRY_URL" ] || ENTRY_URL=$DISCOVERY_URL
+probe_url() {
+  url=$1
+  expected=$2
+  marker=${3:-}
 
-META=$("$CURL" --noproxy '*' -sS -L --max-time "$TIMEOUT" \
-  -c "$COOKIE_FILE" -b "$COOKIE_FILE" -o "$ENTRY_HTML" \
-  -w '%{http_code}|%{url_effective}' "$ENTRY_URL" 2>"$ERROR_LOG") \
-  || die "无法访问认证入口：$(sed -n '1p' "$ERROR_LOG")"
+  META=$("$CURL" --noproxy '*' -sS -L --max-time "$PROBE_TIMEOUT" \
+    -o "$PROBE_BODY" -w '%{http_code}|%{url_effective}' "$url" 2>/dev/null) \
+    || return 1
 
-HTTP_CODE=${META%%|*}
-FINAL_URL=${META#*|}
+  code=${META%%|*}
+  final=${META#*|}
 
-if [ "$HTTP_CODE" = "204" ]; then
-  echo "连通性检测返回 HTTP 204，当前网络已经可以上网，无需重复认证。"
+  # 被校园门户接管后，最终地址通常包含 eportal/index.jsp；即使门户
+  # 恰好返回 200，也不能把它当成真实外网可用。
+  case "$final" in
+    *eportal*|*index.jsp*) return 1 ;;
+  esac
+
+  case "$expected" in
+    204)
+      [ "$code" = "204" ] || return 1
+      ;;
+    marker)
+      [ "$code" = "200" ] || return 1
+      grep -F "$marker" "$PROBE_BODY" >/dev/null 2>&1 || return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+network_is_online() {
+  ONLINE_PROBE_COUNT=0
+
+  probe_url "$PROBE_URL_1" 204 \
+    && ONLINE_PROBE_COUNT=$((ONLINE_PROBE_COUNT + 1))
+  probe_url "$PROBE_URL_2" marker 'Success' \
+    && ONLINE_PROBE_COUNT=$((ONLINE_PROBE_COUNT + 1))
+  probe_url "$PROBE_URL_3" marker 'Microsoft Connect Test' \
+    && ONLINE_PROBE_COUNT=$((ONLINE_PROBE_COUNT + 1))
+  probe_url "$PROBE_URL_4" marker 'Example Domain' \
+    && ONLINE_PROBE_COUNT=$((ONLINE_PROBE_COUNT + 1))
+
+  [ "$ONLINE_PROBE_COUNT" -ge "$MIN_ONLINE_PROBES" ]
+}
+
+# 不再把单个 connectivity-check 的 HTTP 204 当成“全网在线”。门户、路由器
+# 或缓存设备可能伪造/保留 204；至少两个独立的普通探针通过才跳过认证。
+if network_is_online; then
+  echo "真实外网探针通过：$ONLINE_PROBE_COUNT/4，当前网络已在线，无需重复认证。"
   exit 0
 fi
+echo "真实外网探针未通过：$ONLINE_PROBE_COUNT/4，开始检查校园认证门户。"
+
+ENTRY_URL=$ZSTU_WIFI_URL
+if [ -n "$ENTRY_URL" ]; then
+  META=$("$CURL" --noproxy '*' -sS -L --max-time "$TIMEOUT" \
+    -c "$COOKIE_FILE" -b "$COOKIE_FILE" -o "$ENTRY_HTML" \
+    -w '%{http_code}|%{url_effective}' "$ENTRY_URL" 2>"$ERROR_LOG") \
+    || die "无法访问认证入口：$(sed -n '1p' "$ERROR_LOG")"
+  HTTP_CODE=${META%%|*}
+  FINAL_URL=${META#*|}
+else
+  # 不依赖固定的 generate_204：掉线时它可能返回 204，普通 HTTP 地址更
+  # 容易被校园门户重定向到带 wlanuserip/mac/url 参数的 ePortal 页面。
+  ENTRY_URL=
+  META=
+  for candidate in "$DISCOVERY_URL" "$DISCOVERY_URL_2" "$DISCOVERY_URL_3" "$DISCOVERY_URL_4"; do
+    META=$("$CURL" --noproxy '*' -sS -L --max-time "$TIMEOUT" \
+      -c "$COOKIE_FILE" -b "$COOKIE_FILE" -o "$ENTRY_HTML" \
+      -w '%{http_code}|%{url_effective}' "$candidate" 2>"$ERROR_LOG") \
+      || continue
+    HTTP_CODE=${META%%|*}
+    FINAL_URL=${META#*|}
+    if [ "$HTTP_CODE" = "200" ]; then
+      case "$FINAL_URL" in
+        *eportal*|*index.jsp*)
+          case "$FINAL_URL" in
+            *\?*)
+              ENTRY_URL=$candidate
+              break
+              ;;
+          esac
+          ;;
+      esac
+    fi
+  done
+  [ -n "$ENTRY_URL" ] || die "无法自动发现带查询参数的 ePortal 认证入口；请检查网络或配置当前未认证时的 ZSTU_WIFI_URL"
+fi
+
 [ "$HTTP_CODE" = "200" ] || die "认证入口返回 HTTP $HTTP_CODE"
 
 case "$FINAL_URL" in
   *\?*) ;;
-  *) die "认证入口没有查询参数；请使用当前未认证时浏览器跳转后的完整 URL" ;;
+  *) die "认证入口没有查询参数；请配置当前未认证时的完整 ePortal 地址" ;;
 esac
 
 QUERY=${FINAL_URL#*\?}

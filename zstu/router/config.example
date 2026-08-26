@@ -5,10 +5,20 @@ ZSTU_WIFI_PASSWORD='your_password'
 
 # 推荐填当前未认证时浏览器跳转后的完整 URL；不填则尝试自动发现。
 # ZSTU_WIFI_URL='http://192.168.102.130/eportal/index.jsp?...当前查询参数...'
+# 自动发现默认依次尝试普通 HTTP 地址；一般无需填写。
+# ZSTU_WIFI_DISCOVERY_URL='http://neverssl.com/'
+# ZSTU_WIFI_DISCOVERY_URL_2='http://captive.apple.com/hotspot-detect.html'
+# ZSTU_WIFI_DISCOVERY_URL_3='http://www.msftconnecttest.com/connecttest.txt'
+# ZSTU_WIFI_DISCOVERY_URL_4='http://connectivitycheck.gstatic.com/generate_204'
 
 # 当前门户通常为空；如果 getServices 要求选择服务，再填写实际值。
 ZSTU_WIFI_SERVICE=''
 
 # 可选
 # ZSTU_WIFI_TIMEOUT=30
+# 多探针真实外网检测：至少通过其中 2 个才认为已在线。
+# ZSTU_WIFI_PROBE_TIMEOUT=8
+# ZSTU_WIFI_MIN_ONLINE_PROBES=2
 # ZSTU_WIFI_VALIDCODE=''
+# ZSTU_WIFI_LOG_FILE='/tmp/zstu_wifi_watch.log'
+# ZSTU_WIFI_LOG_TAG='zstu_wifi'
