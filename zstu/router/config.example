@@ -10,6 +10,8 @@ ZSTU_WIFI_PASSWORD='your_password'
 # ZSTU_WIFI_DISCOVERY_URL_2='http://captive.apple.com/hotspot-detect.html'
 # ZSTU_WIFI_DISCOVERY_URL_3='http://www.msftconnecttest.com/connecttest.txt'
 # ZSTU_WIFI_DISCOVERY_URL_4='http://connectivitycheck.gstatic.com/generate_204'
+# 直接访问校园门户，外部 DNS/HTTP 不通时仍可尝试发现入口。
+# ZSTU_WIFI_DISCOVERY_URL_5='http://192.168.102.130/'
 
 # 当前门户通常为空；如果 getServices 要求选择服务，再填写实际值。
 ZSTU_WIFI_SERVICE=''

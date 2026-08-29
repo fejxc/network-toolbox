@@ -22,7 +22,7 @@ chmod 600 .env.zstu
 ./zstu/mac/login.sh --url 'http://192.168.102.130/eportal/index.jsp?...当前查询参数...'
 ```
 
-门户地址中的 `wlanuserip`、`mac`、`url` 等参数通常跟当前连接会话有关。你抓包里的旧 URL、`JSESSIONID` 和 Cookie 不要长期复用；如果自动发现返回 204 或提示没有查询参数，请在未认证状态下重新打开任意 HTTP 页面，复制浏览器跳转后的完整 ePortal 地址再用 `--url` 传入。
+门户地址中的 `wlanuserip`、`mac`、`url` 等参数通常跟当前连接会话有关。你抓包里的旧 URL、`JSESSIONID` 和 Cookie 不要长期复用；如果自动发现返回 204 或提示没有查询参数，请在未认证状态下重新打开任意 HTTP 页面，复制浏览器跳转后的完整 `index.jsp` ePortal 地址再用 `--url` 传入。`success.jsp?userIndex=...` 是认证成功页，不是登录入口；路由器版会把它识别为当前门户会话已认证。
 
 调试时只输出字段名和配置摘要，不输出账号、密码、Cookie 或 `userIndex`：
 

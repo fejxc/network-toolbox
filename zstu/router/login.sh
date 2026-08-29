@@ -33,6 +33,8 @@ DISCOVERY_URL=${ZSTU_WIFI_DISCOVERY_URL:-http://neverssl.com/}
 DISCOVERY_URL_2=${ZSTU_WIFI_DISCOVERY_URL_2:-http://captive.apple.com/hotspot-detect.html}
 DISCOVERY_URL_3=${ZSTU_WIFI_DISCOVERY_URL_3:-http://www.msftconnecttest.com/connecttest.txt}
 DISCOVERY_URL_4=${ZSTU_WIFI_DISCOVERY_URL_4:-http://connectivitycheck.gstatic.com/generate_204}
+# 直接访问校园门户，避免外部 DNS/HTTP 探针不可用时完全无法发现入口。
+DISCOVERY_URL_5=${ZSTU_WIFI_DISCOVERY_URL_5:-http://192.168.102.130/}
 PROBE_URL_1=${ZSTU_WIFI_PROBE_URL_1:-http://connectivitycheck.gstatic.com/generate_204}
 PROBE_URL_2=${ZSTU_WIFI_PROBE_URL_2:-http://captive.apple.com/hotspot-detect.html}
 PROBE_URL_3=${ZSTU_WIFI_PROBE_URL_3:-http://www.msftconnecttest.com/connecttest.txt}
@@ -168,12 +170,36 @@ network_is_online() {
   [ "$ONLINE_PROBE_COUNT" -ge "$MIN_ONLINE_PROBES" ]
 }
 
+portal_is_authenticated() {
+  PORTAL_META=$("$CURL" --noproxy '*' -sS -L --max-time "$PROBE_TIMEOUT" \
+    -c "$COOKIE_FILE" -b "$COOKIE_FILE" -o "$PROBE_BODY" \
+    -w '%{http_code}|%{url_effective}' "$DISCOVERY_URL_5" 2>/dev/null) \
+    || return 1
+
+  PORTAL_CODE=${PORTAL_META%%|*}
+  PORTAL_FINAL=${PORTAL_META#*|}
+  [ "$PORTAL_CODE" = "200" ] || return 1
+
+  # ePortal 在认证有效但普通外网探针暂时失败时会跳到 success.jsp。
+  # 这表示门户会话已经认证，不应继续走 index.jsp 入口发现失败分支。
+  case "$PORTAL_FINAL" in
+    *eportal/success.jsp|*eportal/success.jsp\?*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # 不再把单个 connectivity-check 的 HTTP 204 当成“全网在线”。门户、路由器
 # 或缓存设备可能伪造/保留 204；至少两个独立的普通探针通过才跳过认证。
 if network_is_online; then
   echo "真实外网探针通过：$ONLINE_PROBE_COUNT/4，当前网络已在线，无需重复认证。"
   exit 0
 fi
+
+if portal_is_authenticated; then
+  echo "校园认证门户返回 success.jsp，但真实外网探针未通过；当前认证会话有效，跳过重复认证。"
+  exit 0
+fi
+
 echo "真实外网探针未通过：$ONLINE_PROBE_COUNT/4，开始检查校园认证门户。"
 
 ENTRY_URL=$ZSTU_WIFI_URL
@@ -189,7 +215,7 @@ else
   # 容易被校园门户重定向到带 wlanuserip/mac/url 参数的 ePortal 页面。
   ENTRY_URL=
   META=
-  for candidate in "$DISCOVERY_URL" "$DISCOVERY_URL_2" "$DISCOVERY_URL_3" "$DISCOVERY_URL_4"; do
+  for candidate in "$DISCOVERY_URL" "$DISCOVERY_URL_2" "$DISCOVERY_URL_3" "$DISCOVERY_URL_4" "$DISCOVERY_URL_5"; do
     META=$("$CURL" --noproxy '*' -sS -L --max-time "$TIMEOUT" \
       -c "$COOKIE_FILE" -b "$COOKIE_FILE" -o "$ENTRY_HTML" \
       -w '%{http_code}|%{url_effective}' "$candidate" 2>"$ERROR_LOG") \
