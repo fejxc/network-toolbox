@@ -1,0 +1,22 @@
+# iPhone WireGuard 客户端模板（Full Tunnel 最终版）
+#
+# 使用步骤：
+#   1. iPhone WireGuard App：Add a Tunnel → Create from Scratch，
+#      由 App 生成密钥（PrivateKey 只留在 iPhone）
+#   2. 把 iPhone 的公钥填到 OpenWrt 的 iPhone Peer（Allowed IP = 10.66.66.3/32）
+#   3. 在 App 中按下表填写；本模板仅作对照，不要导入带占位符的文件
+#
+# 注意：iPhone 必须使用独立密钥和 10.66.66.3/32，
+#       严禁复用 Mac 的 PrivateKey / PublicKey / WireGuard IP。
+
+[Interface]
+PrivateKey = <IPHONE_PRIVATE_KEY>
+Address = 10.66.66.3/32
+DNS = 10.66.66.1
+# MTU = 1380    # 仅当 ping 正常但 HTTPS/SSH 卡顿、部分网站打不开时启用
+
+[Peer]
+PublicKey = <OPENWRT_PUBLIC_KEY>
+Endpoint = hz.fejxc.top:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25

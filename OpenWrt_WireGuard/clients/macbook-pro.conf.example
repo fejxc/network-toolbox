@@ -1,0 +1,23 @@
+# MacBook Pro WireGuard 客户端模板（Full Tunnel 最终版）
+#
+# 使用步骤：
+#   1. 生成密钥：wg genkey | tee privatekey | wg pubkey > publickey
+#   2. 把公钥填到 OpenWrt 的 MacBook-Pro Peer（Allowed IP = 10.66.66.2/32）
+#   3. 替换下方 <MAC_PRIVATE_KEY> / <OPENWRT_PUBLIC_KEY> 后导入 WireGuard.app
+#
+# 安全提醒：填入真实 PrivateKey 后的 .conf 不要放回本仓库、不要截图分享。
+#
+# 首次调试建议：先把 AllowedIPs 改为 10.66.66.0/24，ping 通 10.66.66.1
+# 确认隧道打通后，再改回 0.0.0.0/0（Full Tunnel）。
+
+[Interface]
+PrivateKey = <MAC_PRIVATE_KEY>
+Address = 10.66.66.2/32
+DNS = 10.66.66.1
+# MTU = 1380    # 仅当 ping 正常但 HTTPS/SSH 卡顿、部分网站打不开时启用
+
+[Peer]
+PublicKey = <OPENWRT_PUBLIC_KEY>
+Endpoint = hz.fejxc.top:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25

@@ -1,0 +1,27 @@
+# 新设备 WireGuard 客户端模板
+#
+# 扩容规律：OpenWrt 固定 10.66.66.1/24，每台新客户端从 10.66.66.4/32
+# 起按序分配一个 /32，并复制本模板替换以下占位符：
+#
+#   <DEVICE_PRIVATE_KEY>   新设备私钥，只留在该设备
+#   <OPENWRT_PUBLIC_KEY>   OpenWrt WG_HOME 的公钥（各客户端相同）
+#   10.66.66.X/32          该设备的专属地址
+#
+# 对应动作：
+#   1. wg genkey | tee privatekey | wg pubkey > publickey
+#   2. OpenWrt 新增 Peer：PublicKey = 新设备公钥，AllowedIPs = 10.66.66.X/32
+#      （服务端 Peer 不要填 0.0.0.0/0）
+#   3. 首次接入先用 AllowedIPs = 10.66.66.0/24 验证 ping 10.66.66.1，
+#      再切换为 0.0.0.0/0
+
+[Interface]
+PrivateKey = <DEVICE_PRIVATE_KEY>
+Address = 10.66.66.X/32
+DNS = 10.66.66.1
+# MTU = 1380    # 仅当 ping 正常但 HTTPS/SSH 卡顿、部分网站打不开时启用
+
+[Peer]
+PublicKey = <OPENWRT_PUBLIC_KEY>
+Endpoint = hz.fejxc.top:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
