@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Monitor manuscript status on the MDPI SUSY submission portal.
+"""监控 MDPI SUSY 投稿系统的稿件状态变化。
 
-The script intentionally reads the authenticated Cookie header from an
-environment variable or a local file.  It never stores the Cookie in the
-state file and does not attempt to log in or bypass anti-bot protection.
+脚本刻意只从环境变量或本地文件读取已登录的 Cookie：不代填账号密码、
+不尝试登录、也不绕过反爬；Cookie 同样不会写进状态基线文件。
+
+工作方式：
+
+1. 定时抓取投稿状态页，用无依赖的表格解析器提取每篇稿件；
+2. 与本地状态基线（state.json）对比，找出状态变化的稿件；
+3. 有变化时通过 macOS 系统通知和/或钉钉机器人推送；
+4. 抓取成功后刷新基线；Cookie 过期、页面改版等异常情况不更新基线，
+   避免把坏数据当成新状态。
 """
 
 from __future__ import annotations
@@ -33,6 +40,8 @@ DEFAULT_INTERVAL = 5 * 60
 DEFAULT_COOKIE_FILE = Path.home() / ".config" / "mdpi-monitor" / "cookie"
 DEFAULT_STATE_FILE = Path.home() / ".cache" / "mdpi-monitor" / "state.json"
 
+# SUSY 页面上出现过的状态短语。匹配时按长度倒序，防止 “pending minor
+# revision” 被更短的 “revision” 提前命中。
 STATUS_PHRASES = (
     "pending editorial office processing",
     "rejected by editorial office",
@@ -69,6 +78,7 @@ STATUS_PHRASES = (
     "revision",
 )
 
+# 页面出现这些字样说明账号下确实没有投稿，而不是页面解析失败。
 NO_MANUSCRIPT_MARKERS = (
     "no manuscripts",
     "no submissions",
@@ -80,6 +90,8 @@ NO_MANUSCRIPT_MARKERS = (
 
 @dataclass
 class HTMLRow:
+    """解析出的一行：所属表格 ID、单元格文本、链接、是否含表头单元格。"""
+
     table_id: int
     cells: list[str]
     links: list[str]
@@ -88,6 +100,8 @@ class HTMLRow:
 
 @dataclass
 class Manuscript:
+    """一篇投稿的快照；key 用于跨轮次对齐同一条记录。"""
+
     key: str
     manuscript_id: str
     title: str
@@ -97,7 +111,11 @@ class Manuscript:
 
 
 class TableParser(html.parser.HTMLParser):
-    """Small dependency-free parser for table rows and links."""
+    """无第三方依赖的表格行与链接解析器。
+
+    只提取每行单元格文本、链接和是否含表头单元格；script/style/noscript
+    里的文本用深度计数跳过，不算单元格内容。
+    """
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -186,22 +204,24 @@ class TableParser(html.parser.HTMLParser):
 
 
 def clean_text(value: str) -> str:
+    """反转义 HTML 实体，并把连续空白压成单个空格。"""
     value = html.unescape(value)
     return re.sub(r"\s+", " ", value).strip()
 
 
 def normalized(value: str) -> str:
+    """clean_text 后再 casefold，作为状态比较用的规范形式。"""
     return clean_text(value).casefold()
 
 
 def parse_cookie_value(raw: str) -> str:
-    """Accept a Cookie header, a Netscape cookie file, or a copied curl command."""
+    """接受 Cookie 请求头、Netscape cookie 文件，或整条复制来的 curl 命令。"""
     text = raw.strip()
     if not text:
         return ""
 
-    # If the user saved the complete curl command, extract the -b/--cookie
-    # argument instead of sending the rest of the shell command as a header.
+    # 如果用户保存的是整条 curl 命令，则提取其中的 -b/--cookie 参数，
+    # 而不是把整段 shell 命令当请求头发出去。
     match = re.search(r"(?:^|\s)(?:-b|--cookie)\s+(['\"])(.*?)\1", text, re.DOTALL)
     if match:
         text = match.group(2).strip()
@@ -209,12 +229,12 @@ def parse_cookie_value(raw: str) -> str:
     text = re.sub(r"(?im)^\s*cookie\s*:\s*", "", text).strip()
     text = text.strip("'\"")
 
-    # The pasted prompt may contain Markdown-escaped punctuation.  These
-    # backslashes are formatting artifacts, not part of the browser cookie.
+    # 粘贴进来的内容可能带 Markdown 转义。这些反斜杠是排版产物，
+    # 不是浏览器 Cookie 的一部分。
     for escaped, literal in ((r"\_", "_"), (r"\~", "~"), (r"\.", ".")):
         text = text.replace(escaped, literal)
 
-    # Also accept a Netscape-format cookie file.
+    # 同时接受 Netscape 格式的 cookie 文件（即 curl -b 能直接使用的那种）。
     netscape_pairs: list[str] = []
     non_comment_lines = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     if non_comment_lines and all("\t" in line for line in non_comment_lines):
@@ -239,6 +259,7 @@ def parse_cookie_value(raw: str) -> str:
 
 
 def read_cookie(cookie_file: Path | None) -> str:
+    """按「Cookie 文件 → 环境变量 MDPI_COOKIE」的顺序读取，都没有则报错。"""
     if cookie_file is not None and cookie_file.exists():
         warn_if_insecure(cookie_file, "Cookie 文件")
         cookie = parse_cookie_value(cookie_file.read_text(encoding="utf-8"))
@@ -258,6 +279,7 @@ def read_cookie(cookie_file: Path | None) -> str:
 
 
 def warn_if_insecure(path: Path, label: str) -> None:
+    """文件权限对其他用户开放时给出警告，避免 Cookie 被同机其他用户读取。"""
     try:
         mode = path.stat().st_mode & 0o777
     except OSError:
@@ -267,6 +289,7 @@ def warn_if_insecure(path: Path, label: str) -> None:
 
 
 def fetch_page(url: str, cookie: str, timeout: float) -> tuple[int, str, str]:
+    """带上浏览器请求头抓取状态页，返回 (状态码, 最终URL, 页面文本)。"""
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6",
@@ -295,12 +318,14 @@ def fetch_page(url: str, cookie: str, timeout: float) -> tuple[int, str, str]:
 
 
 def _header_score(row: HTMLRow) -> int:
+    """统计一行中表头关键词的命中数，用于识别表头行。"""
     text = " ".join(row.cells).casefold()
     terms = ("manuscript", "submission", "status", "title", "date", "updated")
     return sum(term in text for term in terms)
 
 
 def find_headers(rows: Iterable[HTMLRow]) -> dict[int, list[str]]:
+    """为每张表挑出得分最高的表头行，返回 {表格ID: 列名列表}。"""
     headers: dict[int, list[str]] = {}
     best_scores: dict[int, int] = {}
     for row in rows:
@@ -312,6 +337,7 @@ def find_headers(rows: Iterable[HTMLRow]) -> dict[int, list[str]]:
 
 
 def header_index(headers: list[str], *terms: str) -> int | None:
+    """在表头列名里找第一个含任一关键词的列下标。"""
     for index, value in enumerate(headers):
         if any(term in value for term in terms):
             return index
@@ -319,6 +345,7 @@ def header_index(headers: list[str], *terms: str) -> int | None:
 
 
 def status_from_text(text: str) -> str:
+    """从单元格文本中识别已知状态短语；未命中返回空串。"""
     lower = normalized(text)
     for phrase in sorted(STATUS_PHRASES, key=len, reverse=True):
         if re.search(rf"(?<![\w]){re.escape(phrase)}(?![\w])", lower):
@@ -327,8 +354,8 @@ def status_from_text(text: str) -> str:
 
 
 def manuscript_id_from_text(text: str) -> str:
-    # Typical MDPI identifiers look like ``applsci-1234567``.  The second
-    # pattern also covers numeric IDs displayed after a Manuscript ID label.
+    # MDPI 稿号形如 ``applsci-1234567``；第二个正则覆盖页面上以
+    # “Manuscript ID:” 等标签形式展示的编号。
     match = re.search(r"\b[A-Za-z][A-Za-z0-9_.]*-\d{4,}\b", text)
     if match:
         return match.group(0)
@@ -353,12 +380,13 @@ def choose_title(cells: list[str], manuscript_id: str, status: str) -> str:
     ]
     if not candidates:
         return "未显示标题"
-    # A title is usually the longest non-status cell, while dates and action
-    # links are short.  Keep the original text but cap it for notifications.
+    # 标题通常是最长的非状态单元格，日期和操作链接都很短。保留原文，
+    # 但为推送内容截断长度。
     return max(candidates, key=len)[:300]
 
 
 def extract_manuscripts(page_url: str, page_html: str) -> list[Manuscript]:
+    """从页面 HTML 提取全部投稿记录；同稿号只保留一条。"""
     parser = TableParser()
     parser.feed(page_html)
     headers_by_table = find_headers(parser.rows)
@@ -367,8 +395,8 @@ def extract_manuscripts(page_url: str, page_html: str) -> list[Manuscript]:
     for row in parser.rows:
         if len(row.cells) < 2:
             continue
-        # Do not turn a table header such as ``Manuscript | Status`` into a
-        # fake manuscript with status ``Status``.
+        # 避免把 ``Manuscript | Status`` 这类表头行解析成状态为
+        # “Status” 的假稿件。
         if row.has_header_cell or _header_score(row) >= 2:
             continue
         headers = headers_by_table.get(row.table_id, [])
@@ -429,6 +457,7 @@ def extract_manuscripts(page_url: str, page_html: str) -> list[Manuscript]:
 
 
 def looks_like_auth_error(status_code: int, final_url: str, page_html: str, records: list[Manuscript]) -> bool:
+    """判断是否 Cookie 失效：401/403，或无记录且页面/URL 像登录页。"""
     if status_code in {401, 403}:
         return True
     if records:
@@ -440,6 +469,7 @@ def looks_like_auth_error(status_code: int, final_url: str, page_html: str, reco
 
 
 def load_state(path: Path) -> dict[str, dict[str, str]]:
+    """读取本地状态基线；文件缺失视为首次运行，格式损坏则报错而非清零。"""
     if not path.exists():
         return {}
     try:
@@ -453,6 +483,7 @@ def load_state(path: Path) -> dict[str, dict[str, str]]:
 
 
 def save_state(path: Path, records: list[Manuscript]) -> None:
+    """写入新的状态基线，并把文件权限收紧到 600。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -466,11 +497,13 @@ def save_state(path: Path, records: list[Manuscript]) -> None:
 
 
 def short_title(title: str, limit: int = 70) -> str:
+    """把标题截断到 limit 字符以内，用于通知与终端输出。"""
     title = clean_text(title)
     return title if len(title) <= limit else title[: limit - 1] + "…"
 
 
 def print_records(records: list[Manuscript]) -> None:
+    """向终端打印本次抓到的全部稿件概要。"""
     print(f"发现 {len(records)} 篇投稿：")
     for record in sorted(records, key=lambda item: item.manuscript_id.casefold()):
         date = f"；日期：{record.date}" if record.date else ""
@@ -480,14 +513,15 @@ def print_records(records: list[Manuscript]) -> None:
 def detect_changes(
     old: dict[str, dict[str, str]], records: list[Manuscript]
 ) -> tuple[list[tuple[Manuscript, str]], list[Manuscript]]:
+    """对比新旧基线，返回 (状态变化列表, 本次消失的记录列表)。"""
     changes: list[tuple[Manuscript, str]] = []
     current_keys = set()
     for record in records:
         current_keys.add(record.key)
         previous = old.get(record.key)
         if previous is None:
-            # The user only wants status transitions. A newly appearing row is
-            # recorded in the next baseline but does not trigger a push.
+            # 只关注状态流转。新出现的稿件仅记入下一次基线，不触发推送，
+            # 避免页面改版或筛选变化造成推送轰炸。
             continue
         old_status = normalized(str(previous.get("status", "")))
         new_status = normalized(record.status)
@@ -514,7 +548,7 @@ def apple_script_quote(value: str) -> str:
 
 
 def send_dingtalk(webhook: str, title: str, message: str, keyword: str) -> None:
-    """Send a markdown message through a DingTalk custom robot webhook."""
+    """通过钉钉自定义机器人 Webhook 发送 markdown 消息。"""
     if not webhook:
         raise RuntimeError("未配置钉钉 Webhook；请设置 MDPI_DINGTALK_WEBHOOK。")
     parsed = urllib.parse.urlparse(webhook)
@@ -537,8 +571,7 @@ def send_dingtalk(webhook: str, title: str, message: str, keyword: str) -> None:
         with urllib.request.urlopen(request, timeout=20) as response:
             raw = response.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
-        # Do not include the exception itself: its string may contain the
-        # access_token embedded in the URL.
+        # 不把异常本身带进错误信息：其字符串里可能包含 URL 中的 access_token。
         raise RuntimeError(f"钉钉 Webhook 返回 HTTP {exc.code}。") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"钉钉 Webhook 访问失败：{exc.reason}") from exc
@@ -560,6 +593,7 @@ def notify(
     dingtalk_webhook: str = "",
     dingtalk_keyword: str = "MDPI",
 ) -> None:
+    """按 mode 派发通知：macos 系统通知、dingtalk 机器人，或 both/none。"""
     if mode == "none":
         return
     if mode in {"macos", "both"} and platform.system() == "Darwin":
@@ -576,6 +610,7 @@ def notify(
 
 
 def check_once(args: argparse.Namespace, cookie: str) -> int:
+    """抓取一次状态页，对比基线并在有变化时推送；成功后刷新基线。"""
     status_code, final_url, page_html = fetch_page(args.url, cookie, args.timeout)
     records = extract_manuscripts(final_url, page_html)
     if looks_like_auth_error(status_code, final_url, page_html, records):

@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Login helper for Zhejiang Library Wi-Fi captive portal."""
+"""浙江图书馆 Wi-Fi 认证门户登录助手。
+
+脚本模拟浏览器完成整个认证流程：
+
+1. 清除代理环境变量，直连认证入口（门户在内网 2.2.1.1，走代理/TUN
+   会连不上或拿到错误页面）；
+2. GET 入口页，从其中的 iframe 定位真正的登录页 /cn/login.html；
+3. 解析登录页的 HTML form，识别用户名/密码等字段；
+4. 按门户 Mac 端 XHR 的字段组合提交登录（见 build_zjlib_ajax_payload）；
+5. 根据响应内容和最终 URL 判断是否登录成功。
+
+账号、密码来自 .env 或命令行参数，只存在于本次进程内，不写入磁盘；
+debug 保存的 HTML 也不包含密码。
+"""
 
 from __future__ import annotations
 
@@ -18,7 +31,9 @@ from http.cookiejar import CookieJar
 from pathlib import Path
 
 
+# 认证门户入口。门户只在「未认证」状态下伺服该页，已认证后再访问会返回 404。
 DEFAULT_URL = "https://2.2.1.1:8443/cn/index.html"
+# 这些代理变量会把对内网门户的请求劫持到外网，登录前需要全部清掉。
 PROXY_ENV_KEYS = (
     "http_proxy",
     "https_proxy",
@@ -31,12 +46,16 @@ PROXY_ENV_KEYS = (
 
 @dataclass
 class Form:
+    """登录页里解析出的一个 <form>。"""
+
     action: str = ""
     method: str = "GET"
     inputs: list[dict[str, str]] = field(default_factory=list)
 
 
 class PortalParser(html.parser.HTMLParser):
+    """提取 iframe 与 form 的极简 HTML 解析器（无第三方依赖）。"""
+
     def __init__(self) -> None:
         super().__init__()
         self.iframes: list[str] = []
@@ -63,6 +82,7 @@ class PortalParser(html.parser.HTMLParser):
 
 
 def load_dotenv(path: Path) -> None:
+    """读取简单键值形式的 .env 文件；不覆盖已存在的环境变量。"""
     if not path.exists():
         return
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -77,6 +97,11 @@ def load_dotenv(path: Path) -> None:
 
 
 def clear_proxy_environment() -> None:
+    """清空代理变量并设置 NO_PROXY。
+
+    门户在内网 2.2.1.1，系统代理或 TUN 会把请求带去外网，导致连不上
+    或拿到错误页面；登录和状态检查都必须直连。
+    """
     for key in PROXY_ENV_KEYS:
         os.environ.pop(key, None)
     os.environ["NO_PROXY"] = "2.2.1.1,2.2.1.0/24,localhost,127.0.0.1"
@@ -84,7 +109,10 @@ def clear_proxy_environment() -> None:
 
 
 def build_opener() -> tuple[urllib.request.OpenerDirector, CookieJar]:
+    """构造跳过证书校验、强制直连、自动管理 Cookie 的 opener。"""
+    # 门户使用自签名证书，标准证书校验必然失败，只能跳过。
     context = ssl._create_unverified_context()
+    # ProxyHandler({}) 显式禁用代理，即使环境残留代理设置也不生效。
     cookie_jar = CookieJar()
     opener = urllib.request.build_opener(
         urllib.request.HTTPSHandler(context=context),
@@ -105,13 +133,13 @@ def request_text(
     return_headers: bool = False,
     extra_headers: dict[str, str] | None = None,
 ):
-    """Fetch ``url`` via ``opener``.
+    """通过 ``opener`` 请求 ``url``。
 
-    Returns ``(status, final_url, body)``; when ``return_headers`` is set, also
-    appends a fourth ``headers`` element (a ``dict``) for debugging.
+    返回 ``(status, final_url, body)``；``return_headers=True`` 时额外追加
+    第四个元素 ``headers``（dict），供 debug 输出使用。
 
-    Non-2xx responses (e.g. 404 when already authenticated) are returned as a
-    normal triple instead of raising, so callers can branch on status.
+    非 2xx 响应（例如已认证状态下门户返回 404）不抛异常，而是照常返回，
+    让调用方按 status 分支处理。
     """
     headers = {
         "User-Agent": "Mozilla/5.0 zjlib-wifi-login/2.0",
@@ -136,8 +164,8 @@ def request_text(
             result = (resp.status, resp.geturl(), decoded)
             resp_headers = {k: v for k, v in resp.headers.items()}
     except urllib.error.HTTPError as exc:
-        # Treat non-2xx (e.g. 404 when already online) as a normal response so the
-        # caller's status check can handle it instead of crashing the whole run.
+        # 把非 2xx（例如已在线时的 404）当普通响应返回，让调用方按状态码
+        # 分支处理，而不是让整个脚本直接崩掉。
         decoded = ""
         resp_headers = {}
         try:
@@ -162,6 +190,11 @@ def parse_html(html: str) -> PortalParser:
 
 
 def find_login_page(entry_url: str, entry_html: str) -> str:
+    """从入口页定位真正的登录页 URL。
+
+    门户把登录页嵌在 iframe 里：优先取 src 含 ``login`` 的 iframe，
+    否则取第一个 iframe；都没有则认为入口页本身就是登录页。
+    """
     parser = parse_html(entry_html)
     for src in parser.iframes:
         if "login" in src.lower():
@@ -172,6 +205,11 @@ def find_login_page(entry_url: str, entry_html: str) -> str:
 
 
 def pick_form(forms: list[Form]) -> Form | None:
+    """在页面的多个 form 中挑出登录表单。
+
+    依据是控件 name/id 是否含 user/account/login/pass 等关键词；
+    都不匹配时退回第一个 form。
+    """
     for form in forms:
         names = " ".join(
             (item.get("name", "") + " " + item.get("id", "")).lower()
@@ -183,6 +221,11 @@ def pick_form(forms: list[Form]) -> Form | None:
 
 
 def find_input(form: Form, patterns: tuple[str, ...], exclude: tuple[str, ...] = ()) -> str | None:
+    """按关键词在 form 控件中查找字段名（name/id）。
+
+    匹配范围含 name、id、placeholder、type；``exclude`` 用于排除
+    RedirectUrl 这类名字里恰好含关键词、但不是账号输入的字段。
+    """
     for item in form.inputs:
         key = (item.get("name") or item.get("id") or "").strip()
         haystack = " ".join(
@@ -199,6 +242,10 @@ def find_input(form: Form, patterns: tuple[str, ...], exclude: tuple[str, ...] =
 
 
 def build_payload(form: Form, username: str, password: str) -> dict[str, str]:
+    """按通用规则构造提交数据：保留隐藏字段默认值，再填入账号密码。
+
+    通用兜底实现；zjlib 门户实际提交走 build_zjlib_ajax_payload。
+    """
     payload: dict[str, str] = {}
     for item in form.inputs:
         key = (item.get("name") or item.get("id") or "").strip()
@@ -241,7 +288,9 @@ def build_zjlib_ajax_payload(form: Form, username: str, password: str) -> dict[s
         else:
             values[key] = item.get("value", "")
 
-    # Match the Mac-specific XHR in /cn/login.html submitFunc().
+    # 与 /cn/login.html 中 Mac 端提交函数 submitFunc() 发出的 XHR 字段
+    # 完全一致。不能只提交用户名密码：门户还依赖 RedirectUrl、anonymous
+    # 等隐藏字段，缺失会被当成非法请求。
     return {
         "username": username,
         "password": password,
@@ -255,6 +304,11 @@ def build_zjlib_ajax_payload(form: Form, username: str, password: str) -> dict[s
 
 
 def looks_successful(text: str, final_url: str) -> bool:
+    """根据响应内容和最终 URL 粗略判断登录是否成功。
+
+    成功时门户跳到 auth_success.html 或提示「已登录」；出现 error/失败
+    字样则判定失败；两者皆无时，以最终页面是否仍是登录页兜底。
+    """
     lowered = text.lower()
     if any(
         token in lowered
@@ -267,12 +321,14 @@ def looks_successful(text: str, final_url: str) -> bool:
 
 
 def save_debug(name: str, text: str) -> Path:
+    """把调试 HTML 保存到当前目录，返回文件路径。"""
     path = Path.cwd() / name
     path.write_text(text, encoding="utf-8")
     return path
 
 
 def describe_inputs(form: Form) -> list[str]:
+    """生成表单控件清单（密码值打码），配合 --debug --show-inputs 使用。"""
     lines = []
     for item in form.inputs:
         key = (item.get("name") or item.get("id") or "").strip()
@@ -298,6 +354,11 @@ def login(
     debug: bool,
     show_inputs: bool,
 ) -> int:
+    """执行完整登录流程，返回进程退出码。
+
+    0 成功；1 请求已提交但未识别为成功；2 网络/门户异常；4 登录页里
+    没有可用表单（门户改版，需按保存的 debug HTML 更新脚本）。
+    """
     clear_proxy_environment()
     opener, cookie_jar = build_opener()
 
@@ -405,6 +466,7 @@ def login(
 
 
 def status(entry_url: str, timeout: float) -> int:
+    """--status 模式：只探测门户入口可达性，打印识别到的登录页 URL。"""
     clear_proxy_environment()
     opener, _ = build_opener()
     try:
@@ -432,8 +494,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     script_dir = Path(__file__).resolve().parent
-    # Prefer a colocated config, then fall back to the repository-root .env so
-    # moving the library files into zjlib/ does not invalidate existing setup.
+    # 优先读脚本同目录的 .env，其次退回仓库根目录的 .env；这样把脚本
+    # 挪进 zjlib/ 子目录后，原有配置依然生效。
     load_dotenv(script_dir / ".env")
     load_dotenv(script_dir.parent / ".env")
     args = parse_args()
