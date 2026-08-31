@@ -701,19 +701,21 @@ def main() -> int:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
 
-    while True:
-        try:
-            result = check_once(args, cookie)
-        except KeyboardInterrupt:
-            print("\n已停止。")
-            return 0
-        except (OSError, RuntimeError, ValueError) as exc:
-            print(f"[{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}] 检查失败：{exc}", file=sys.stderr)
-            result = 1
+    # Ctrl+C 也可能发生在轮询 sleep 期间，统一在外层捕获，避免打印 Traceback。
+    try:
+        while True:
+            try:
+                result = check_once(args, cookie)
+            except (OSError, RuntimeError, ValueError) as exc:
+                print(f"[{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}] 检查失败：{exc}", file=sys.stderr)
+                result = 1
 
-        if args.once:
-            return result
-        time.sleep(args.interval)
+            if args.once:
+                return result
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("\n已停止。")
+        return 0
 
 
 if __name__ == "__main__":
