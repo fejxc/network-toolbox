@@ -13,6 +13,10 @@
 - [MDPI 投稿监控](mdpi/README.md)：本地轮询 SUSY 投稿状态，状态变化时提醒。
 - [远程服务器 Codex + Claude Code + SSH 反向代理](RemoteServer_Codex_ClaudeCode/README.md)：SSH RemoteForward 借用 Mac 代理，远程容器内 CLI 稳定出网。
 
+## 通用组件
+
+- [common/dingtalk.py](common/README.md)：钉钉机器人通知工具类，新监控配置 Webhook + 关键词即可接入。
+
 ## 安全约定
 
 账号密码、API Key、私钥等配置文件均被 `.gitignore` 忽略或使用占位符，不要提交到 GitHub。
