@@ -45,7 +45,7 @@ export MDPI_DINGTALK_KEYWORD='MDPI'
 python3 mdpi/mdpi_monitor.py --notify dingtalk --interval 300
 ```
 
-> 推送核心是仓库级通用组件 [common/dingtalk.py](../common/dingtalk.py)。以后新增其它监控，直接 `DingTalkNotifier.from_env("前缀")` 接入，环境变量配置见 [common/README.md](../common/README.md)。
+> 本脚本自带钉钉推送实现、可独立拷走运行。仓库另有通用组件 [common/dingtalk.py](../common/README.md)（含单元测试与接入文档），后续新增其它监控时可直接复用。
 
 如果希望同时保留 macOS 通知：
 

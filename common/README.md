@@ -2,6 +2,8 @@
 
 各监控 / 脚本子目录共用的工具类集合。目标是：**新监控只需配置地址和关键词，即可接入通知**。
 
+> 目前仓库内暂无使用方——现有监控（mdpi）为自包含实现、可独立运行；本目录是给后续新监控备用的框架。
+
 ## DingTalkNotifier：钉钉机器人通知
 
 代码：[dingtalk.py](dingtalk.py)（仅标准库，不可变配置对象）。单元测试：[test_dingtalk.py](test_dingtalk.py)。
