@@ -17,7 +17,7 @@ chmod 600 ~/.config/mdpi-monitor/cookie
 
 ## 运行
 
-从仓库根目录运行，默认每 5 分钟检查一次：
+从仓库根目录运行，默认每 5 分钟检查一次，提醒方式默认为 macOS 系统通知（可选 `dingtalk` / `both` / `none`）：
 
 ```bash
 python3 mdpi/mdpi_monitor.py --notify dingtalk --interval 300
@@ -55,7 +55,13 @@ python3 mdpi/mdpi_monitor.py --notify both --interval 300
 
 ## 查看日志
 
-监控日志默认追加到本目录的 `mdpi_monitor.log`。查看最近记录：
+脚本本身只输出到终端（stdout/stderr），不会自己写日志文件。如需保留历史记录，用重定向追加到本目录的 `mdpi_monitor.log`（已被 `.gitignore` 忽略）：
+
+```bash
+python3 mdpi/mdpi_monitor.py --notify dingtalk --interval 300 >> mdpi/mdpi_monitor.log 2>&1
+```
+
+查看最近记录：
 
 ```bash
 tail -n 50 mdpi/mdpi_monitor.log

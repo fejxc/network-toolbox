@@ -16,7 +16,7 @@ python3 zjlib/wifi_login.py
 ./zjlib/login.sh
 ```
 
-脚本默认读取仓库根目录的 `.env`。模板位于 `zjlib/env.example`：
+脚本会依次读取 `zjlib/.env` 和仓库根目录的 `.env`（先读到的键生效，不覆盖已存在的环境变量）。模板位于 `zjlib/env.example`：
 
 ```bash
 cp zjlib/env.example .env
@@ -46,8 +46,11 @@ python3 zjlib/wifi_login.py --status
 python3 zjlib/wifi_login.py --debug
 python3 zjlib/wifi_login.py --url https://2.2.1.1:8443/cn/index.html
 python3 zjlib/wifi_login.py --timeout 10
+python3 zjlib/wifi_login.py --debug --show-inputs
 ./zjlib/login.sh --debug
 ```
+
+退出码：`0` 成功；`1` 请求已提交但未识别为成功；`2` 网络/门户异常；`4` 登录页里没有可用表单（门户改版，需按 `--debug` 保存的 HTML 更新脚本）。
 
 `--debug` 会打印识别到的登录页、提交地址、字段名、**完整请求体、响应状态/头/体摘要**，并保存调试 HTML。脚本按 `/cn/login.html` 中 `submitFunc()` 的 Mac 分支发送字段：`username`、`password`、`RedirectUrl`、`anonymous`、`anonymousurl`、`checkbox`、`checkbox1`、`accesscode`。
 
