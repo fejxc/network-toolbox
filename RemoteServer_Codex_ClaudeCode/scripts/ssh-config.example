@@ -1,0 +1,18 @@
+# 追加到 Mac 的 ~/.ssh/config
+#
+# 效果：ssh codex-server 即自动建立反向代理；
+# VS Code Remote-SSH 连接 codex-server 时也会一起建立。
+#
+# 注意：与独立的 `ssh -R` 命令二选一使用，
+#       两条连接同时监听 127.0.0.1:7890 会端口占用。
+
+Host codex-server
+    HostName 10.11.154.192
+    User sunyun
+    Port 20064
+
+    RemoteForward 127.0.0.1:7890 127.0.0.1:7897
+
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    ExitOnForwardFailure yes

@@ -1,0 +1,40 @@
+# 容器内 /root/.codex/config.toml 模板
+#
+# 安装后：chmod 600 /root/.codex/config.toml
+#
+# 与部署强相关的三项：
+#   1. cli_auth_credentials_store = "file" —— 文件认证（配合 auth.json）
+#   2. [projects."…"] trust_level —— 常用项目目录信任
+#   3. 文件权限 600
+#
+# model 等会随 Codex 版本或账号可用模型变化，以实际可用为准。
+
+model = "gpt-5.6-luna"
+model_reasoning_effort = "xhigh"
+approvals_reviewer = "user"
+service_tier = "default"
+cli_auth_credentials_store = "file"
+
+[projects."/remote-home/sunyun/code/law/cgrr"]
+trust_level = "trusted"
+
+[projects."/remote-home"]
+trust_level = "trusted"
+
+[projects."/remote-home/cgrr_train/casr"]
+trust_level = "trusted"
+
+[projects."/remote-home/cgrr_train/glier_repro"]
+trust_level = "trusted"
+
+[projects."/remote-home/cgrr_train/cgrr"]
+trust_level = "trusted"
+
+[projects."/remote-home/cgrr_train/KELLER_repro"]
+trust_level = "trusted"
+
+[projects."/root"]
+trust_level = "trusted"
+
+[notice]
+hide_full_access_warning = true
