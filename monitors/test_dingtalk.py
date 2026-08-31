@@ -1,20 +1,17 @@
-"""common/dingtalk.py 的单元测试（仅标准库，不发起真实网络请求）。
+"""dingtalk.py 的单元测试（仅标准库，不发起真实网络请求）。
 
-运行：python3 common/test_dingtalk.py
+运行：python3 monitors/test_dingtalk.py
 """
 
 from __future__ import annotations
 
 import json
-import sys
 import unittest
 import urllib.error
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from common.dingtalk import DEFAULT_KEYWORD, DingTalkNotifier
+# 与被测模块同目录；直接运行本文件时脚本目录已在 sys.path 上。
+from dingtalk import DEFAULT_KEYWORD, DingTalkNotifier
 
 WEBHOOK = "https://oapi.dingtalk.com/robot/send?access_token=secret-token"
 
@@ -28,7 +25,7 @@ def make_urlopen(raw: bytes = b'{"errcode":0,"errmsg":"ok"}'):
 
 class DingTalkSendTest(unittest.TestCase):
     def test_send_embeds_keyword_and_markdown(self):
-        with patch("common.dingtalk.urllib.request.urlopen", make_urlopen()) as urlopen:
+        with patch("dingtalk.urllib.request.urlopen", make_urlopen()) as urlopen:
             DingTalkNotifier(webhook=WEBHOOK, keyword="MDPI").send("状态变化", "正文内容")
 
         request = urlopen.call_args.args[0]
@@ -39,7 +36,7 @@ class DingTalkSendTest(unittest.TestCase):
         self.assertIn("正文内容", payload["markdown"]["text"])
 
     def test_send_uses_default_keyword_when_blank(self):
-        with patch("common.dingtalk.urllib.request.urlopen", make_urlopen()) as urlopen:
+        with patch("dingtalk.urllib.request.urlopen", make_urlopen()) as urlopen:
             DingTalkNotifier(webhook=WEBHOOK, keyword="  ").send("t", "m")
 
         payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
@@ -56,14 +53,14 @@ class DingTalkSendTest(unittest.TestCase):
 
     def test_http_error_does_not_leak_token(self):
         exc = urllib.error.HTTPError(WEBHOOK, 400, "Bad Request", hdrs=None, fp=None)
-        with patch("common.dingtalk.urllib.request.urlopen", MagicMock(side_effect=exc)):
+        with patch("dingtalk.urllib.request.urlopen", MagicMock(side_effect=exc)):
             with self.assertRaisesRegex(RuntimeError, "HTTP 400") as ctx:
                 DingTalkNotifier(webhook=WEBHOOK).send("t", "m")
         self.assertNotIn("secret-token", str(ctx.exception))
 
     def test_errcode_nonzero_reports_errmsg(self):
         raw = b'{"errcode":310000,"errmsg":"keywords not in content"}'
-        with patch("common.dingtalk.urllib.request.urlopen", make_urlopen(raw)):
+        with patch("dingtalk.urllib.request.urlopen", make_urlopen(raw)):
             with self.assertRaisesRegex(RuntimeError, "keywords not in content"):
                 DingTalkNotifier(webhook=WEBHOOK).send("t", "m")
 

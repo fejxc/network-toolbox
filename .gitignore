@@ -9,4 +9,4 @@ zjlib_*_debug.html
 mdpi_monitor.env
 mdpi_monitor.cookie
 .mdpi-monitor-state.json
-mdpi/mdpi_monitor.log
+monitors/mdpi_monitor.log

@@ -34,6 +34,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+# 同目录的监控共用通知组件（dingtalk.py），两者需放在同一目录；
+# 脚本目录自动在 sys.path 上，无需额外路径操作。
+from dingtalk import DingTalkNotifier
+
 
 DEFAULT_URL = "https://susy.mdpi.com/user/manuscripts/status"
 DEFAULT_INTERVAL = 5 * 60
@@ -547,48 +551,6 @@ def apple_script_quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def send_dingtalk(webhook: str, title: str, message: str, keyword: str) -> None:
-    """通过钉钉自定义机器人 Webhook 发送 markdown 消息。
-
-    本脚本自带推送实现、可独立拷走运行；仓库另有通用组件
-    common/dingtalk.py 供后续新监控复用（行为与本函数一致）。
-    """
-    if not webhook:
-        raise RuntimeError("未配置钉钉 Webhook；请设置 MDPI_DINGTALK_WEBHOOK。")
-    parsed = urllib.parse.urlparse(webhook)
-    if parsed.scheme != "https" or parsed.netloc != "oapi.dingtalk.com":
-        raise RuntimeError("钉钉 Webhook 地址必须是 https://oapi.dingtalk.com/...。")
-
-    safe_keyword = clean_text(keyword) or "MDPI"
-    markdown = f"### {safe_keyword}｜{title}\n\n{message}\n\n来源：MDPI SUSY"
-    payload = {
-        "msgtype": "markdown",
-        "markdown": {"title": f"{safe_keyword}｜{title}", "text": markdown},
-    }
-    request = urllib.request.Request(
-        webhook,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            raw = response.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        # 不把异常本身带进错误信息：其字符串里可能包含 URL 中的 access_token。
-        raise RuntimeError(f"钉钉 Webhook 返回 HTTP {exc.code}。") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"钉钉 Webhook 访问失败：{exc.reason}") from exc
-
-    try:
-        result = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("钉钉 Webhook 返回了无法解析的响应。") from exc
-    if result.get("errcode") != 0:
-        errmsg = clean_text(str(result.get("errmsg", "未知错误")))
-        raise RuntimeError(f"钉钉推送失败：{errmsg}")
-
-
 def notify(
     title: str,
     message: str,
@@ -610,7 +572,10 @@ def notify(
         print(f"通知：{title}：{message}", file=sys.stderr)
 
     if mode in {"dingtalk", "both"}:
-        send_dingtalk(dingtalk_webhook, title, message, dingtalk_keyword)
+        # 「来源：MDPI SUSY」脚注为 MDPI 监控专属信息。
+        DingTalkNotifier(webhook=dingtalk_webhook, keyword=dingtalk_keyword).send(
+            title, f"{message}\n\n来源：MDPI SUSY"
+        )
 
 
 def check_once(args: argparse.Namespace, cookie: str) -> int:

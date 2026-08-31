@@ -2,7 +2,7 @@
 
 任何监控脚本只需「Webhook 地址 + 安全关键词」即可接入推送：
 
-    from common.dingtalk import DingTalkNotifier
+    from dingtalk import DingTalkNotifier  # 与监控脚本同目录
 
     # 方式一：从环境变量读取（推荐）
     #   优先读 <前缀>_DINGTALK_WEBHOOK / <前缀>_DINGTALK_KEYWORD，
