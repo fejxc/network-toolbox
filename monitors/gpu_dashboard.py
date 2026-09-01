@@ -58,18 +58,18 @@ _HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GPU 监控</title>
 <style>
-  body{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;margin:24px;background:#14161a;color:#e8eaed}
+  body{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;margin:24px;background:#ffffff;color:#1f2328}
   h1{font-size:20px;margin:0 0 4px} h2{font-size:16px;margin:28px 0 0}
-  .meta{color:#9aa0a6;font-size:13px;margin-bottom:8px}
+  .meta{color:#656d76;font-size:13px;margin-bottom:8px}
   table{border-collapse:collapse;width:100%;margin-top:10px}
-  th,td{padding:8px 12px;border-bottom:1px solid #2a2d33;text-align:left;font-size:14px;white-space:nowrap}
-  th{color:#9aa0a6;font-weight:500}
-  td.cmd{white-space:normal;color:#9aa0a6;font-size:12px;max-width:520px}
-  .bar{background:#2a2d33;border-radius:3px;height:10px;width:110px;display:inline-block;vertical-align:middle;margin-right:6px}
+  th,td{padding:8px 12px;border-bottom:1px solid #e6e8eb;text-align:left;font-size:14px;white-space:nowrap}
+  th{color:#656d76;font-weight:500}
+  td.cmd{white-space:normal;color:#656d76;font-size:12px;max-width:520px}
+  .bar{background:#e6e8eb;border-radius:3px;height:10px;width:110px;display:inline-block;vertical-align:middle;margin-right:6px}
   .bar i{display:block;height:10px;border-radius:3px}
-  .util i{background:#4da3ff}.mem i{background:#ffb84d}
-  .free{color:#7bd88f}.hot{color:#ff6b6b}
-  .err{color:#ff6b6b;padding:12px 0}
+  .util i{background:#0969da}.mem i{background:#e8882d}
+  .free{color:#1a7f37}.hot{color:#cf222e}
+  .err{color:#cf222e;padding:12px 0}
 </style>
 </head>
 <body>
