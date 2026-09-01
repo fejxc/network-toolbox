@@ -10,7 +10,9 @@ monitors/
 ├── dingtalk.py                # 钉钉机器人通知工具类（监控共用）
 ├── test_dingtalk.py           # dingtalk.py 单元测试
 ├── mdpi_monitor.py            # MDPI 投稿状态监控
-└── mdpi_monitor.env.example   # MDPI 监控配置模板
+├── mdpi_monitor.env.example   # MDPI 监控配置模板
+├── gpu_monitor.py             # 学校 GPU 平台监控
+└── gpu_monitor.env.example    # GPU 监控配置模板
 ```
 
 > `mdpi_monitor.py` 依赖同目录的 `dingtalk.py`（同目录 import，无路径配置），两者需一起拷贝部署。
@@ -77,6 +79,42 @@ python3 monitors/mdpi_monitor.py --notify dingtalk --interval 300 >> monitors/md
 ```
 
 查看最近记录：`tail -n 50 monitors/mdpi_monitor.log`；实时跟踪：`tail -f monitors/mdpi_monitor.log`。
+
+---
+
+## GPU 平台监控
+
+[gpu_monitor.py](gpu_monitor.py) 只用标准库，查看学校 GPU 平台（Portainer 变体）上每张卡的利用率 / 显存 / 温度和使用人。数据来自两个只读接口：`/api/endpoints/{id}` 的快照（每卡聚合）与 `/api/gpustatReal/{id}`（进程级占用）。刻意不调用 `/api/users/usergpus/{id}`——该接口会把账号明文密码一起返回。
+
+### 配置 Token
+
+平台 JWT 只从本地文件或环境变量读取，不入仓库。在浏览器登录平台后，从任意 `/api/...` 请求头里复制 `Bearer ` 后面的 Token：
+
+```bash
+mkdir -p ~/.config/gpu-monitor && umask 077
+${EDITOR:-vi} ~/.config/gpu-monitor/token     # 粘贴 Token，末尾不要换行也行
+chmod 600 ~/.config/gpu-monitor/token
+```
+
+Token 是 JWT，过期（payload 的 `exp` 字段）后重新登录导出一次即可；过期时脚本会提示 401。
+
+### 运行
+
+```bash
+python3 monitors/gpu_monitor.py                    # 打印一次当前状态
+python3 monitors/gpu_monitor.py --watch            # 持续刷新（默认 60s）
+python3 monitors/gpu_monitor.py --endpoint-id 117  # 其它服务器
+```
+
+### 空闲卡钉钉提醒（配合 --watch）
+
+```bash
+export GPU_DINGTALK_WEBHOOK='https://oapi.dingtalk.com/robot/send?access_token=替换'
+export GPU_DINGTALK_KEYWORD='GPU'
+python3 monitors/gpu_monitor.py --watch --interval 120 --alert-free 2 --notify dingtalk
+```
+
+空闲卡数**从阈值以下涨到以上**时推送一次（状态沿触发，不重复轰炸）。配置模板：[gpu_monitor.env.example](gpu_monitor.env.example)。
 
 ---
 
