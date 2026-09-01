@@ -12,6 +12,7 @@ monitors/
 ├── mdpi_monitor.py            # MDPI 投稿状态监控
 ├── mdpi_monitor.env.example   # MDPI 监控配置模板
 ├── gpu_monitor.py             # 学校 GPU 平台监控
+├── gpu_dashboard.py           # GPU 本地大屏（自动续期，免登录）
 └── gpu_monitor.env.example    # GPU 监控配置模板
 ```
 
@@ -127,6 +128,19 @@ python3 monitors/gpu_monitor.py --watch --interval 120 --alert-free 2 --notify d
 ```
 
 空闲卡数**从阈值以下涨到以上**时推送一次（状态沿触发，不重复轰炸）。配置模板：[gpu_monitor.env.example](gpu_monitor.env.example)。
+
+### GPU 本地大屏（免登录）
+
+[gpu_dashboard.py](gpu_dashboard.py) 起一个仅本机可访问的 HTTP 服务，浏览器看卡状态，**从此不用登录学校平台**：
+
+```bash
+python3 monitors/gpu_dashboard.py          # 默认 http://127.0.0.1:8787/ 并自动打开浏览器
+```
+
+- 页面每 15 秒自动刷新（`--interval` 可调），数据带 15 秒缓存（`--cache-ttl`）；
+- 后台线程每 30 分钟自动续期 JWT（`--renew-interval`），与 `--refresh-token`/cron 互不冲突，共用同一 token 文件；
+- 401 时自动续期重试；服务只绑定 `127.0.0.1`，Token 不会出现在页面里；
+- 换服务器：`--endpoint-id 117`；换端口：`--port 8888`；不开浏览器：`--no-open`。
 
 ---
 
