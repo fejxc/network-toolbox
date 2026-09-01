@@ -66,7 +66,7 @@ cd ~/frp_0.59.0_darwin_arm64 && ./frpc -c ./frpc.toml
 
 # 3. 放置 LaunchAgent（从本仓库复制；用户名不同记得改路径）
 mkdir -p ~/Library/LaunchAgents
-cp /path/to/network-toolbox/MacMini_FRPC/com.sunyun.frpc.plist ~/Library/LaunchAgents/
+cp /path/to/network-toolbox/macmini-frpc/com.sunyun.frpc.plist ~/Library/LaunchAgents/
 
 # 4. 检查 plist 语法，必须显示 OK
 plutil -lint ~/Library/LaunchAgents/com.sunyun.frpc.plist

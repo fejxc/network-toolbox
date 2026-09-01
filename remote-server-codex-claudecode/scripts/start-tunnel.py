@@ -39,7 +39,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-# 默认值与 RemoteServer_Codex_ClaudeCode 现网环境一致，均可用环境变量或参数覆盖
+# 默认值与本目录（remote-server-codex-claudecode）现网环境一致，均可用环境变量或参数覆盖
 DEFAULT_SSH_HOST = "10.11.154.192"
 DEFAULT_SSH_PORT = 20064
 DEFAULT_SSH_USER = "sunyun"
