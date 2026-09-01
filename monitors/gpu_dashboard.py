@@ -56,58 +56,95 @@ _HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GPU 监控</title>
+<title>GPU 资源监控大屏</title>
 <style>
-  body{font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;margin:24px;background:#ffffff;color:#1f2328}
-  h1{font-size:20px;margin:0 0 4px} h2{font-size:16px;margin:28px 0 0}
-  .meta{color:#656d76;font-size:13px;margin-bottom:8px}
-  table{border-collapse:collapse;width:100%;margin-top:10px}
-  th,td{padding:8px 12px;border-bottom:1px solid #e6e8eb;text-align:left;font-size:14px;white-space:nowrap}
-  th{color:#656d76;font-weight:500}
-  td.cmd{white-space:normal;color:#656d76;font-size:12px;max-width:520px}
-  .bar{background:#e6e8eb;border-radius:3px;height:10px;width:110px;display:inline-block;vertical-align:middle;margin-right:6px}
-  .bar i{display:block;height:10px;border-radius:3px}
-  .util i{background:#0969da}.mem i{background:#e8882d}
-  .free{color:#1a7f37}.hot{color:#cf222e}
-  .err{color:#cf222e;padding:12px 0}
+*{box-sizing:border-box}
+body{margin:0;padding:26px 30px;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:#dbe7ff;background:#050b1c;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(1100px 460px at 50% -8%,rgba(35,100,230,.28),transparent 65%),repeating-linear-gradient(0deg,rgba(90,150,255,.045) 0 1px,transparent 1px 46px),repeating-linear-gradient(90deg,rgba(90,150,255,.045) 0 1px,transparent 1px 46px)}
+.wrap{position:relative;max-width:1440px;margin:0 auto}
+header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid rgba(0,212,255,.3);padding-bottom:12px;margin-bottom:18px}
+h1{margin:0;font-size:24px;letter-spacing:5px;color:#eaf6ff;text-shadow:0 0 22px rgba(0,212,255,.55)}
+.sub{font-size:13px;color:#7f9cc7;margin-top:4px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:18px}
+.tile{background:linear-gradient(160deg,rgba(16,35,80,.72),rgba(8,17,42,.88));border:1px solid rgba(0,212,255,.22);border-radius:10px;padding:13px 10px;text-align:center}
+.tile b{display:block;font-size:28px;font-weight:600;color:#00d4ff;font-variant-numeric:tabular-nums;text-shadow:0 0 16px rgba(0,212,255,.45)}
+.tile i{font-style:normal;font-size:12px;color:#7f9cc7;letter-spacing:2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:14px}
+.gcard{background:linear-gradient(165deg,rgba(16,35,80,.68),rgba(7,14,35,.92));border:1px solid rgba(0,212,255,.18);border-radius:12px;padding:14px 16px}
+.gcard.isfree{border-color:rgba(61,219,217,.3)}
+.ghead{display:flex;justify-content:space-between;align-items:center;font-size:14px;color:#bfe0ff;letter-spacing:1px}
+.badge{font-size:11px;padding:2px 9px;border-radius:10px;border:1px solid}
+.badge.run{color:#00d4ff;border-color:rgba(0,212,255,.55)}
+.badge.free{color:#3ddbd9;border-color:rgba(61,219,217,.55)}
+.ring{width:88px;height:88px;border-radius:50%;margin:12px auto 10px;display:grid;place-items:center;background:conic-gradient(var(--c) calc(var(--p)*1%),rgba(120,160,255,.13) 0)}
+.ring div{width:70px;height:70px;border-radius:50%;background:#0a1430;display:grid;place-items:center;text-align:center}
+.ring b{font-size:17px;font-variant-numeric:tabular-nums}
+.ring i{font-style:normal;font-size:10px;color:#7f9cc7;display:block;margin-top:2px}
+.kv{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#7f9cc7;margin-top:9px}
+.kv em{font-style:normal;color:#c9dcff;font-variant-numeric:tabular-nums}
+.bar{display:inline-block;width:92px;height:8px;background:rgba(120,160,255,.14);border-radius:4px;vertical-align:middle;margin-right:8px}
+.bar i{display:block;height:8px;border-radius:4px;background:linear-gradient(90deg,#00d4ff,#3d7eff)}
+.users{margin-top:10px;padding-top:9px;border-top:1px dashed rgba(0,212,255,.18);font-size:13px;color:#cfe2ff;min-height:20px}
+h2{font-size:15px;color:#bfe0ff;letter-spacing:2px;margin:24px 0 0}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{padding:9px 12px;font-size:13px;text-align:left;border-bottom:1px solid rgba(0,212,255,.12);white-space:nowrap}
+thead th{color:#7fd6ff;background:rgba(0,212,255,.07);letter-spacing:1px}
+td.cmd{color:#8fa8cf;white-space:normal;max-width:520px}
+.hot{color:#ff5c7a}.free{color:#3ddbd9}
+.empty{color:#7f9cc7;text-align:center;padding:18px}
+.err{color:#ff5c7a;padding:12px 0}
 </style>
 </head>
 <body>
-<h1>GPU 监控</h1>
-<div class="meta" id="meta">加载中…</div>
-<table id="gpus">
-<thead><tr><th>卡</th><th>利用率</th><th>显存</th><th>已用/总量</th><th>温度</th><th>使用者</th></tr></thead>
-<tbody id="gpu-rows"></tbody>
-</table>
+<div class="wrap">
+<header>
+  <div><h1>GPU 资源监控大屏</h1><div class="sub" id="sub">加载中…</div></div>
+  <div class="sub">每 __INTERVAL__s 自动刷新</div>
+</header>
+<section class="tiles" id="tiles"></section>
+<section class="grid" id="grid"></section>
 <h2>进程明细</h2>
 <table>
 <thead><tr><th>卡</th><th>使用者</th><th>显存</th><th>实例</th><th>命令</th></tr></thead>
 <tbody id="proc-rows"></tbody>
 </table>
+</div>
 <script>
 const INTERVAL = __INTERVAL__;
-function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
-function bars(p,cls){return `<span class="bar ${cls}"><i style="width:${Math.min(100,p)}%"></i></span>${Math.round(p)}%`}
+const esc = s => {const d=document.createElement('div');d.textContent=s??'';return d.innerHTML};
+const utilColor = u => u<=50 ? '#00d4ff' : u<=85 ? '#ffb84d' : '#ff5c7a';
+const bars = p => `<span class="bar"><i style="width:${Math.min(100,p)}%"></i></span>`;
 function render(d){
-  document.getElementById('meta').textContent =
-    `${d.endpoint_name}（endpoint ${d.endpoint_id}）· 更新于 ${d.updated_at} · 每 ${INTERVAL}s 自动刷新`;
-  document.getElementById('gpu-rows').innerHTML = d.gpus.map(g=>{
-    const who = g.free ? '<span class="free">空闲</span>' : esc(g.users.join('、'));
-    const temp = g.temp >= 75 ? `<span class="hot">${g.temp.toFixed(0)}°C</span>` : `${g.temp.toFixed(0)}°C`;
-    return `<tr><td>${g.id}</td><td>${bars(g.util,'util')}</td><td>${bars(g.mem_percent,'mem')}</td>`+
-      `<td>${g.mem_used_gb.toFixed(1)}/${g.mem_total_gb.toFixed(1)}G</td><td>${temp}</td><td>${who}</td></tr>`;
-  }).join('');
+  document.getElementById('sub').textContent =
+    `${d.endpoint_name}（endpoint ${d.endpoint_id}）· 更新于 ${d.updated_at}`;
+  const g = d.gpus, free = g.filter(x=>x.free).length;
+  const avg = g.length ? g.reduce((s,x)=>s+(x.util||0),0)/g.length : 0;
+  const used = g.reduce((s,x)=>s+(x.mem_used_gb||0),0), tot = g.reduce((s,x)=>s+(x.mem_total_gb||0),0);
+  const tile = (v,l,c)=>`<div class="tile"><b${c?` style="color:${c};text-shadow:0 0 16px ${c}66"`:''}>${v}</b><i>${l}</i></div>`;
+  document.getElementById('tiles').innerHTML =
+    tile(g.length,'总卡数') + tile(free,'空闲卡', free ? '#3ddbd9' : '') +
+    tile(g.length-free,'使用中') + tile(Math.round(avg)+'%','平均利用率') +
+    tile(used.toFixed(0)+'/'+tot.toFixed(0)+'G','显存用量');
+  document.getElementById('grid').innerHTML = g.map(x=>{
+    const c = utilColor(x.util||0);
+    return `<div class="gcard${x.free?' isfree':''}">
+      <div class="ghead"><span>GPU ${x.id}</span><span class="badge ${x.free?'free':'run'}">${x.free?'空闲':'运行中'}</span></div>
+      <div class="ring" style="--p:${x.util||0};--c:${c}"><div><b style="color:${c}">${Math.round(x.util||0)}%</b><i>利用率</i></div></div>
+      <div class="kv"><span>显存 ${bars(x.mem_percent)}</span><em>${x.mem_used_gb.toFixed(1)} / ${x.mem_total_gb.toFixed(1)} G</em></div>
+      <div class="kv"><span>温度</span><em class="${x.temp>=75?'hot':''}">${Math.round(x.temp)}°C</em></div>
+      <div class="users">${x.free?'<span class="free">空闲</span>':esc(x.users.join('、'))}</div>
+    </div>`;}).join('');
   document.getElementById('proc-rows').innerHTML = d.processes.length
     ? d.processes.map(p=>`<tr><td>${p.gpu}</td><td>${esc(p.user)}</td><td>${p.mem_gb.toFixed(1)}G</td>`+
         `<td>${esc(p.instance)}</td><td class="cmd">${esc(p.command)}</td></tr>`).join('')
-    : '<tr><td colspan="5" style="color:#9aa0a6">当前没有用户进程占用 GPU</td></tr>';
+    : '<tr><td colspan="5" class="empty">当前没有用户进程占用 GPU</td></tr>';
 }
 async function refresh(){
   try{
     const d = await (await fetch('/api/status')).json();
-    if(d.error){document.getElementById('meta').innerHTML = `<span class="err">错误：${esc(d.error)}</span>`;return}
+    if(d.error){document.getElementById('sub').innerHTML = `<span class="err">错误：${esc(d.error)}</span>`;return}
     render(d);
-  }catch(e){document.getElementById('meta').innerHTML = `<span class="err">请求失败：${esc(String(e))}</span>`}
+  }catch(e){document.getElementById('sub').innerHTML = `<span class="err">请求失败：${esc(String(e))}</span>`}
 }
 refresh();
 setInterval(refresh, INTERVAL * 1000);
