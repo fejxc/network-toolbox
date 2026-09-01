@@ -46,7 +46,8 @@ from gpu_monitor import (
 )
 
 DEFAULT_PORT = 8787
-DEFAULT_CACHE_TTL = 15.0
+DEFAULT_INTERVAL = 5  # 页面刷新秒数：接近实时，又不至于给平台造成压力
+DEFAULT_CACHE_TTL = 5.0
 DEFAULT_RENEW_INTERVAL = 1800.0  # 30 分钟，和网页开着不关一个效果
 STATUS_CACHE_LOCK = threading.Lock()
 REFRESH_LOCK = threading.Lock()
@@ -65,6 +66,8 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;background:ra
 header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid rgba(0,212,255,.3);padding-bottom:12px;margin-bottom:18px}
 h1{margin:0;font-size:24px;letter-spacing:5px;color:#eaf6ff;text-shadow:0 0 22px rgba(0,212,255,.55)}
 .sub{font-size:13px;color:#7f9cc7;margin-top:4px}
+.hright{text-align:right}
+.clock{font-size:26px;color:#00d4ff;text-shadow:0 0 18px rgba(0,212,255,.5);font-variant-numeric:tabular-nums;letter-spacing:2px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:18px}
 .tile{background:linear-gradient(160deg,rgba(16,35,80,.72),rgba(8,17,42,.88));border:1px solid rgba(0,212,255,.22);border-radius:10px;padding:13px 10px;text-align:center}
 .tile b{display:block;font-size:28px;font-weight:600;color:#00d4ff;font-variant-numeric:tabular-nums;text-shadow:0 0 16px rgba(0,212,255,.45)}
@@ -101,7 +104,7 @@ td.cmd{color:#8fa8cf;white-space:normal;max-width:520px}
 <div class="wrap">
 <header>
   <div><h1>GPU 资源监控大屏</h1><div class="sub" id="sub">加载中…</div></div>
-  <div class="sub">每 __INTERVAL__s 自动刷新</div>
+  <div class="hright"><div class="clock" id="clock">--:--:--</div><div class="sub" id="note">每 __INTERVAL__s 自动刷新</div></div>
 </header>
 <section class="tiles" id="tiles"></section>
 <section class="grid" id="grid"></section>
@@ -148,6 +151,15 @@ async function refresh(){
     render(d);
   }catch(e){document.getElementById('sub').innerHTML = `<span class="err">请求失败：${esc(String(e))}</span>`}
 }
+const p2 = x => String(x).padStart(2, '0');
+function tick(){
+  const n = new Date();
+  document.getElementById('clock').textContent =
+    `${n.getFullYear()}-${p2(n.getMonth()+1)}-${p2(n.getDate())} ${p2(n.getHours())}:${p2(n.getMinutes())}:${p2(n.getSeconds())}`;
+}
+tick();
+setInterval(tick, 1000);
+document.getElementById('note').textContent = `每 ${INTERVAL}s 自动刷新 · 数据缓存 ${__TTL__}s`;
 refresh();
 setInterval(refresh, INTERVAL * 1000);
 </script>
@@ -261,7 +273,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802（http.server 命名约定）
         if self.path == "/":
-            body = _HTML.replace("__INTERVAL__", str(self.server.config.interval)).encode("utf-8")
+            body = (_HTML
+                    .replace("__INTERVAL__", str(self.server.config.interval))
+                    .replace("__TTL__", str(int(self.server.config.cache_ttl)))
+                    .encode("utf-8"))
             self._send(200, body, "text/html; charset=utf-8")
         elif self.path == "/api/status":
             payload = self._status_cached()
@@ -280,7 +295,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             payload = build_status(cfg.url, cfg.endpoint_id, cfg.token_file, cfg.timeout)
         except (OSError, RuntimeError, ValueError) as exc:
-            payload = {"ok": False, "error": str(exc)}
+            # 失败结果不写缓存：瞬时抖动不应在页面上停留一个 TTL
+            return {"ok": False, "error": str(exc)}
         with STATUS_CACHE_LOCK:
             self.server.cache = (now, payload)
         return payload
@@ -304,7 +320,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--token-file", type=Path, default=DEFAULT_TOKEN_FILE, help="JWT token 文件")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址（默认仅本机）")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="监听端口")
-    parser.add_argument("--interval", type=int, default=15, help="页面自动刷新秒数")
+    parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL, help="页面自动刷新秒数")
     parser.add_argument("--cache-ttl", type=float, default=DEFAULT_CACHE_TTL, help="平台数据缓存秒数")
     parser.add_argument("--renew-interval", type=float, default=DEFAULT_RENEW_INTERVAL, help="JWT 续期间隔秒数")
     parser.add_argument("--timeout", type=float, default=REQUEST_TIMEOUT, help="上游请求超时秒数")

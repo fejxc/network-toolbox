@@ -137,7 +137,7 @@ python3 monitors/gpu_monitor.py --watch --interval 120 --alert-free 2 --notify d
 python3 monitors/gpu_dashboard.py          # 默认 http://127.0.0.1:8787/ 并自动打开浏览器
 ```
 
-- 页面每 15 秒自动刷新（`--interval` 可调），数据带 15 秒缓存（`--cache-ttl`）；
+- 顶部实时时钟（秒级跳动）；页面默认每 5 秒自动刷新（`--interval` 可调），数据带 5 秒缓存（`--cache-ttl`），失败结果不缓存；
 - 后台线程每 30 分钟自动续期 JWT（`--renew-interval`），与 `--refresh-token`/cron 互不冲突，共用同一 token 文件；
 - 401 时自动续期重试；服务只绑定 `127.0.0.1`，Token 不会出现在页面里；
 - 换服务器：`--endpoint-id 117`；换端口：`--port 8888`；不开浏览器：`--no-open`。
