@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+
+<plist version="1.0">
+<dict>
+
+    <key>Label</key>
+    <string>com.sunyun.frpc</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sunyun/frp_0.59.0_darwin_arm64/frpc</string>
+        <string>-c</string>
+        <string>/Users/sunyun/frp_0.59.0_darwin_arm64/frpc.toml</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/sunyun/frp_0.59.0_darwin_arm64</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sunyun/frp_0.59.0_darwin_arm64/frpc.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/sunyun/frp_0.59.0_darwin_arm64/frpc.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+</dict>
+</plist>

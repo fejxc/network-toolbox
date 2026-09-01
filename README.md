@@ -12,6 +12,7 @@
 
 - [监控脚本与钉钉通知](monitors/README.md)：MDPI 投稿状态监控；钉钉通知框架同目录复用，新监控接入即用。
 - [远程服务器 Codex + Claude Code + SSH 反向代理](RemoteServer_Codex_ClaudeCode/README.md)：SSH RemoteForward 借用 Mac 代理，远程容器内 CLI 稳定出网。
+- [Mac mini FRPC 开机自启](MacMini_FRPC/README.md)：launchd LaunchAgent 管理 frpc，登录自启 + 崩溃自动拉起。
 
 ## 安全约定
 
