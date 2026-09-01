@@ -69,7 +69,9 @@ h1{margin:0;font-size:24px;letter-spacing:5px;color:#eaf6ff;text-shadow:0 0 22px
 .tile{background:linear-gradient(160deg,rgba(16,35,80,.72),rgba(8,17,42,.88));border:1px solid rgba(0,212,255,.22);border-radius:10px;padding:13px 10px;text-align:center}
 .tile b{display:block;font-size:28px;font-weight:600;color:#00d4ff;font-variant-numeric:tabular-nums;text-shadow:0 0 16px rgba(0,212,255,.45)}
 .tile i{font-style:normal;font-size:12px;color:#7f9cc7;letter-spacing:2px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:14px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+@media (max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:540px){.grid{grid-template-columns:1fr}}
 .gcard{background:linear-gradient(165deg,rgba(16,35,80,.68),rgba(7,14,35,.92));border:1px solid rgba(0,212,255,.18);border-radius:12px;padding:14px 16px}
 .gcard.isfree{border-color:rgba(61,219,217,.3)}
 .ghead{display:flex;justify-content:space-between;align-items:center;font-size:14px;color:#bfe0ff;letter-spacing:1px}
