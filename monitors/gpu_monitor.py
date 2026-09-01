@@ -12,10 +12,15 @@ Token 只从本地文件或环境变量读取，不写入任何仓库文件。
 用法：
 
     python3 gpu_monitor.py                    # 打印一次当前状态
-    python3 gpu_monitor.py --watch            # 持续刷新（默认 60s）
+    python3 gpu_monitor.py --watch            # 持续刷新（默认 60s；401 时自动续期后重试）
     python3 gpu_monitor.py --watch --alert-free 2 --notify dingtalk
                                               # 空闲卡数达到阈值时推送钉钉（状态变化时只推一次）
+    python3 gpu_monitor.py --refresh-token    # 手动/cron 续期 JWT 并写回 token 文件
     python3 gpu_monitor.py --debug            # 额外打印原始 JSON
+
+JWT 续期：平台前端就是靠定期 POST /api/auth/validate 维持登录的，
+本脚本复用同一机制——token 文件里的 JWT 仍有效时即可换到新 JWT，
+无需保存账号密码。若超过过期窗口未续期（如长期关机），需重新导出。
 
 环境变量：GPU_PLATFORM_URL / GPU_PLATFORM_ENDPOINT_ID / GPU_PLATFORM_TOKEN
 """
@@ -42,7 +47,7 @@ DEFAULT_TOKEN_FILE = Path.home() / ".config" / "gpu-monitor" / "token"
 DEFAULT_INTERVAL = 60
 REQUEST_TIMEOUT = 10.0
 SYSTEM_PROCESS_PID = 2808  # 平台上每张卡都挂着的 Xorg 等系统进程，不算「有人用」
-FREE_ALERT_HYSTERESIS = 0  # 仅做状态沿触发，避免重复轰炸
+AUTH_VALIDATE_PATH = "/api/auth/validate"  # 平台前端的 JWT 续期接口
 
 
 @dataclass(frozen=True)
@@ -90,17 +95,7 @@ def read_token(token_file: Path) -> str:
 
 def fetch_json(url: str, token: str, timeout: float) -> object:
     """带平台认证请求一个只读接口，返回解析后的 JSON。"""
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/json, text/plain, */*",
-            "Authorization": f"Bearer {token}",
-            "Cookie": f"jwtKey={token}",
-            "Referer": url,
-            "User-Agent": "Mozilla/5.0 gpu-monitor/1.0",
-        },
-        method="GET",
-    )
+    request = urllib.request.Request(url, headers=auth_headers(token), method="GET")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8", errors="replace"))
@@ -120,6 +115,60 @@ def _to_float(value: object, default: float = 0.0) -> float:
         return float(str(value))
     except (TypeError, ValueError):
         return default
+
+
+def auth_headers(token: str, *, json_body: bool = False) -> dict[str, str]:
+    """平台认证与常规请求头；Authorization 与 jwtKey Cookie 双通道。"""
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Authorization": f"Bearer {token}",
+        "Cookie": f"jwtKey={token}",
+        "User-Agent": "Mozilla/5.0 gpu-monitor/1.0",
+    }
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+def refresh_jwt(base_url: str, token: str, timeout: float) -> str:
+    """用仍有效的 JWT 调 /api/auth/validate 换取续期后的新 JWT（与前端机制一致）。"""
+    request = urllib.request.Request(
+        base_url.rstrip("/") + AUTH_VALIDATE_PATH,
+        data=b"{}",
+        headers=auth_headers(token, json_body=True),
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise RuntimeError("旧 JWT 已彻底过期，validate 无法续期；请重新登录导出一次。") from exc
+        raise RuntimeError(f"续期请求返回 HTTP {exc.code}。") from exc
+    except (urllib.error.URLError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"续期请求失败：{exc}") from exc
+    new_token = str(payload.get("jwt", "")).strip()
+    if not new_token:
+        raise RuntimeError("validate 响应中没有 jwt 字段，平台接口可能已变化。")
+    return new_token
+
+
+def save_token(token_file: Path, token: str) -> None:
+    """把新 JWT 写回 token 文件并收紧权限到 600。"""
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(token + "\n", encoding="utf-8")
+    try:
+        token_file.chmod(0o600)
+    except OSError:
+        pass
+
+
+def cmd_refresh(args: argparse.Namespace, token: str) -> int:
+    """--refresh-token：续期并写回，供 --watch 自动调用或 cron 定期执行。"""
+    new_token = refresh_jwt(args.url, token, args.timeout)
+    save_token(args.token_file, new_token)
+    print(f"JWT 已续期并写入 {args.token_file}")
+    return 0
 
 
 def parse_snapshots(payload: object) -> list[GpuSnapshot]:
@@ -276,11 +325,13 @@ def run_watch(args: argparse.Namespace, token: str) -> int:
     previous_free: set[int] | None = None
     while True:
         failure = False
+        failure_reason = ""
         try:
             free_ids = check_once(args, token)
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 检查失败：{exc}", file=sys.stderr)
             failure = True
+            failure_reason = str(exc)
 
         if not failure:
             if notifier is not None and args.alert_free > 0 and previous_free is not None:
@@ -289,6 +340,14 @@ def run_watch(args: argparse.Namespace, token: str) -> int:
                     notifier.send("GPU 空闲提醒", message)
                     print(f"[提醒] 已推送钉钉：{message}")
             previous_free = set(free_ids)
+        elif "401" in str(failure_reason) or "Token" in str(failure_reason):
+            # Token 过期：自动走 /api/auth/validate 续期，成功则下个周期恢复
+            try:
+                token = refresh_jwt(args.url, token, args.timeout)
+                save_token(args.token_file, token)
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Token 已自动续期，下个周期重试。")
+            except (OSError, RuntimeError, ValueError) as refresh_exc:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] 自动续期失败：{refresh_exc}", file=sys.stderr)
 
         if not args.watch:
             return 1 if failure else 0
@@ -311,6 +370,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--token-file", type=Path, default=DEFAULT_TOKEN_FILE, help="Token 文件路径")
     parser.add_argument("--timeout", type=float, default=REQUEST_TIMEOUT, help="单次请求超时秒数")
     parser.add_argument("--watch", action="store_true", help="持续刷新")
+    parser.add_argument("--refresh-token", action="store_true",
+                        help="续期 JWT 并写回 token 文件（可单独用于 cron）")
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL, help="刷新间隔秒数")
     parser.add_argument("--alert-free", type=int, default=0, help="空闲卡数达到该值时推送钉钉（0 关闭，配合 --watch）")
     parser.add_argument("--notify", choices=("none", "dingtalk"), default="none", help="提醒方式")
@@ -329,6 +390,8 @@ def main() -> int:
     except (OSError, RuntimeError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 2
+    if args.refresh_token:
+        return cmd_refresh(args, token)
     try:
         return run_watch(args, token)
     except KeyboardInterrupt:

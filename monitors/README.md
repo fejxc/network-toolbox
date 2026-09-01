@@ -96,7 +96,19 @@ ${EDITOR:-vi} ~/.config/gpu-monitor/token     # 粘贴 Token，末尾不要换�
 chmod 600 ~/.config/gpu-monitor/token
 ```
 
-Token 是 JWT，过期（payload 的 `exp` 字段）后重新登录导出一次即可；过期时脚本会提示 401。
+Token 是 JWT（平台约每几小时过期）。**续期无需账号密码**：平台前端本身就是靠定期 `POST /api/auth/validate` 维持登录的，脚本复用同一机制，用旧 JWT 换新 JWT 并写回 token 文件：
+
+```bash
+python3 monitors/gpu_monitor.py --refresh-token    # 手动续期一次
+```
+
+长期保活用 cron（每 30 分钟一次即可，和网页开着不关一个效果）：
+
+```bash
+*/30 * * * * /usr/bin/python3 /path/to/network-toolbox/monitors/gpu_monitor.py --refresh-token >> /tmp/gpu-token-refresh.log 2>&1
+```
+
+`--watch` 模式下遇到 401 也会自动续期后重试。若超过过期窗口一直没续期（如长期关机），validate 会返回 401，此时需重新登录导出一次。
 
 ### 运行
 
