@@ -9,7 +9,7 @@
 #   start-claude-full                                  # 默认项目目录
 #   start-claude-full /remote-home/cgrr_train/KELLER_repro
 #
-# 前提：Mac 已运行本地代理，且 ~/bin/start-codex-tunnel 已建好隧道。
+# 前提：Mac 已运行本地代理，且 start-tunnel.py 已建好隧道（python3 scripts/start-tunnel.py）。
 
 set -euo pipefail
 

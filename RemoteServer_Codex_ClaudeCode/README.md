@@ -147,17 +147,31 @@ Host codex-server
 
 > **注意**：`ssh -R` 手动命令和 `~/.ssh/config` 的 `RemoteForward` 日常**二选一**。两条 SSH 连接同时尝试监听 `127.0.0.1:7890` 会端口占用（后建的那条报错，`ExitOnForwardFailure=yes` 时直接退出）。
 
-### 3.4 一键隧道脚本（推荐）
+### 3.4 一键隧道脚本（跨平台，推荐）
 
-模板见 [scripts/start-codex-tunnel.sh](scripts/start-codex-tunnel.sh)，安装：
+[scripts/start-tunnel.py](scripts/start-tunnel.py) 仅依赖 Python 3 标准库和系统 ssh 客户端，macOS / Linux / Windows 通用（端口探测用 TCP 连接，不依赖 lsof/ss/netstat）：
 
 ```bash
-mkdir -p ~/bin
-cp scripts/start-codex-tunnel.sh ~/bin/start-codex-tunnel
-chmod 755 ~/bin/start-codex-tunnel
+# macOS / Linux
+python3 scripts/start-tunnel.py              # 后台建立隧道（自动预检本地代理）
+python3 scripts/start-tunnel.py --status     # 查看后台隧道状态
+python3 scripts/start-tunnel.py --stop       # 停止后台隧道
+python3 scripts/start-tunnel.py --watch      # 守护模式：断线自动重连
+python3 scripts/start-tunnel.py --foreground # 前台运行，Ctrl+C 停止
+
+# Windows（PowerShell，需已启用 OpenSSH 客户端可选功能）
+py scripts\start-tunnel.py --watch
 ```
 
-脚本自带两道防线：已有同名隧道则幂等退出；Mac 代理 7897 未监听则报错不建隧道。
+适配其它服务器 / 端口：
+
+```bash
+python3 scripts/start-tunnel.py --host 1.2.3.4 --port 22 --user me --remote-port 7890 --local-port 7897
+```
+
+配置也可用环境变量（命令行参数优先）：`TUNNEL_SSH_HOST` / `TUNNEL_SSH_PORT` / `TUNNEL_SSH_USER` / `TUNNEL_REMOTE_PORT` / `TUNNEL_LOCAL_PORT`。
+
+内置防线：ssh 客户端缺失或本地代理未监听时报错不建隧道；`ExitOnForwardFailure=yes` 保证远程端口被占（隧道已在运行）时立即报错而不是假成功；后台模式把 ssh stderr 记到 `~/.ssh-reverse-tunnel.log` 便于排障。
 
 ---
 
@@ -448,7 +462,7 @@ flowchart TD
     B -- "是" --> C["Mac：本地代理能否出网？<br/>curl --proxy 7897 api.ipify.org"]
     C -- "否" --> F2["先修 Mac 代理本身"]
     C -- "是" --> D["Mac：SSH -R 隧道进程存在？<br/>ps aux | grep 区分大小写的 [s]sh"]
-    D -- "否" --> F3["~/bin/start-codex-tunnel 重建"]
+    D -- "否" --> F3["start-tunnel 重建"]
     D -- "是" --> E["容器：7890 是否监听？<br/>ss -lnt | grep 7890"]
     E -- "否" --> F4["隧道断开 / 建在错误服务器 /<br/>容器网络看不到宿主机 7890"]
     E -- "是" --> G["容器：curl --proxy 7890 能出网？"]
@@ -565,7 +579,7 @@ chmod 700 /root/.claude && chmod 600 /root/.claude/settings.json
 
 | 位置 | 命令 |
 |---|---|
-| Mac（先开本地代理软件） | `~/bin/start-codex-tunnel` |
+| Mac（先开本地代理软件） | `python3 scripts/start-tunnel.py` |
 | 服务器容器 · Codex | `start-codex-full` |
 | 服务器容器 · Claude Code | `start-claude-full` |
 
@@ -579,7 +593,7 @@ chmod 700 /root/.claude && chmod 600 /root/.claude/settings.json
 |---|---|
 | Mac 代理 | Clash / Mihomo，`127.0.0.1:7897`（HTTP / Mixed） |
 | Mac SSH | `ssh -R 127.0.0.1:7890:127.0.0.1:7897 sunyun@10.11.154.192 -p 20064`，或 `~/.ssh/config` 的 `Host codex-server` |
-| Mac 一键脚本 | `~/bin/start-codex-tunnel`（[scripts/start-codex-tunnel.sh](scripts/start-codex-tunnel.sh)） |
+| 隧道一键脚本（跨平台） | `python3 scripts/start-tunnel.py`（[scripts/start-tunnel.py](scripts/start-tunnel.py)，另支持 `--stop` / `--status` / `--watch`） |
 | 容器代理 | `proxy_on` / `proxy_off`（[scripts/bashrc-proxy.sh](scripts/bashrc-proxy.sh)） |
 | Codex 认证 | `/root/.codex/auth.json`（600），来源 Mac 登录后 scp（[scripts/codex-config.example.toml](scripts/codex-config.example.toml)） |
 | Codex 一键脚本 | `/usr/local/bin/start-codex-full`（[scripts/start-codex-full.sh](scripts/start-codex-full.sh)） |
