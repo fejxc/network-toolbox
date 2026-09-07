@@ -22,7 +22,10 @@ monitors/
 
 ## MDPI 投稿状态监控
 
-[mdpi_monitor.py](mdpi_monitor.py) 只使用 Python 标准库，不需要额外安装依赖。
+[mdpi_monitor.py](mdpi_monitor.py) 只使用 Python 标准库，不需要额外安装依赖。脚本默认使用当前 SUSY 投稿页
+`https://susy.mdpi.com/user/my_manuscripts/status`；如果手工设置 `MDPI_URL`，也请使用这个地址。
+当前页面由 Vue 异步调用 `/restapi/my_manuscript/list` 加载记录，脚本会先走该接口，并保留旧表格解析作为兜底。
+页面或接口遇到瞬时握手/服务端错误时会自动短暂重试；认证失败和返回格式异常不会盲目重试。
 
 ### 配置 Cookie
 

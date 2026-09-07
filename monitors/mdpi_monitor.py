@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import html
 import html.parser
@@ -32,17 +33,26 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable, TypeVar
 
 # 同目录的监控共用通知组件（dingtalk.py），两者需放在同一目录；
 # 脚本目录自动在 sys.path 上，无需额外路径操作。
 from dingtalk import DingTalkNotifier
 
 
-DEFAULT_URL = "https://susy.mdpi.com/user/manuscripts/status"
+# MDPI's current SUSY route is ``my_manuscripts``.  The former
+# ``/user/manuscripts/status`` route can return a successful HTML shell without
+# any manuscript rows, which is indistinguishable from a parser failure.
+DEFAULT_URL = "https://susy.mdpi.com/user/my_manuscripts/status"
 DEFAULT_INTERVAL = 5 * 60
+API_STATUS_TYPES = ("under_processing", "published", "rejected")
+API_PAGE_SIZE = 100
+RETRY_ATTEMPTS = 3
+RETRY_DELAYS = (2, 5)
 DEFAULT_COOKIE_FILE = Path.home() / ".config" / "mdpi-monitor" / "cookie"
 DEFAULT_STATE_FILE = Path.home() / ".cache" / "mdpi-monitor" / "state.json"
+
+T = TypeVar("T")
 
 # SUSY 页面上出现过的状态短语。匹配时按长度倒序，防止 “pending minor
 # revision” 被更短的 “revision” 提前命中。
@@ -292,6 +302,24 @@ def warn_if_insecure(path: Path, label: str) -> None:
         print(f"警告：{label}权限为 {mode:04o}，建议执行 chmod 600 {path}", file=sys.stderr)
 
 
+def decode_http_body(raw: bytes, headers: object) -> str:
+    """解压并解码 HTTP 响应；Akamai 有时会给接口返回 gzip。"""
+    encoding = ""
+    charset = "utf-8"
+    try:
+        encoding = str(headers.get("Content-Encoding", "")).casefold()
+        charset = headers.get_content_charset() or "utf-8"
+    except AttributeError:
+        pass
+    if "gzip" in encoding:
+        try:
+            raw = gzip.decompress(raw)
+        except OSError:
+            # 某些代理已经解压正文但保留了响应头；继续按文本尝试即可。
+            pass
+    return raw.decode(charset, errors="replace")
+
+
 def fetch_page(url: str, cookie: str, timeout: float) -> tuple[int, str, str]:
     """带上浏览器请求头抓取状态页，返回 (状态码, 最终URL, 页面文本)。"""
     headers = {
@@ -311,14 +339,223 @@ def fetch_page(url: str, cookie: str, timeout: float) -> tuple[int, str, str]:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read()
-            charset = response.headers.get_content_charset() or "utf-8"
-            return response.status, response.geturl(), body.decode(charset, errors="replace")
+            return response.status, response.geturl(), decode_http_body(body, response.headers)
     except urllib.error.HTTPError as exc:
         body = exc.read()
-        charset = exc.headers.get_content_charset() or "utf-8"
-        return exc.code, exc.geturl(), body.decode(charset, errors="replace")
+        return exc.code, exc.geturl(), decode_http_body(body, exc.headers)
     except urllib.error.URLError as exc:
         raise RuntimeError(f"访问 MDPI 失败：{exc.reason}") from exc
+
+
+def cookie_field(cookie: str, name: str) -> str:
+    """从已规范化的 Cookie 请求头中读取一个字段，不输出其值。"""
+    for part in cookie.split(";"):
+        key, separator, value = part.partition("=")
+        if separator and key.strip() == name:
+            return value.strip().strip('"')
+    return ""
+
+
+def fetch_api_json(
+    url: str,
+    cookie: str,
+    csrf_token: str,
+    timeout: float,
+    *,
+    api_token: str = "",
+    referer: str = "",
+) -> dict[str, object]:
+    """调用当前 SUSY JSON 接口，并把 HTTP/JSON 错误转换为安全提示。"""
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6",
+        "Cache-Control": "max-age=0",
+        "Content-Type": "application/json",
+        "Cookie": cookie,
+        "Referer": referer or url,
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/151.0.0.0 Safari/537.36"
+        ),
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept-Encoding": "identity",
+    }
+    if csrf_token:
+        headers["Susy-Csrf-Token"] = csrf_token
+    if api_token:
+        headers["Susy-Auth-Token"] = f"Bearer {api_token}"
+
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = decode_http_body(response.read(), response.headers)
+            status_code = response.status
+    except urllib.error.HTTPError as exc:
+        body = decode_http_body(exc.read(), exc.headers)
+        status_code = exc.code
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"访问 MDPI 新接口失败：{exc.reason}") from exc
+
+    if status_code < 200 or status_code >= 300:
+        if status_code in {401, 403}:
+            raise RuntimeError(f"MDPI 新接口返回 HTTP {status_code}，Cookie 可能已过期或请求被拦截。")
+        raise RuntimeError(f"MDPI 新接口返回 HTTP {status_code}。")
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("MDPI 新接口返回的不是 JSON，页面可能发生变化。") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("MDPI 新接口返回格式异常。")
+    return payload
+
+
+def api_origin(url: str) -> str:
+    """提取状态页所属站点的 origin，避免把接口地址写死到路径。"""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError(f"MDPI 地址格式异常：{url}")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def clean_api_text(value: object) -> str:
+    """清理接口字段中的 HTML 实体或展示标签。"""
+    if value is None:
+        return ""
+    return clean_text(re.sub(r"<[^>]+>", " ", str(value)))
+
+
+def manuscript_from_api_row(
+    row: object,
+    status_type: str,
+    page_url: str,
+) -> Manuscript | None:
+    """把 SubmittedManuscripts API 的一行转换为统一快照。"""
+    if not isinstance(row, dict):
+        return None
+    manuscript_id = clean_api_text(row.get("ms_id") or row.get("manuscript_id") or row.get("id"))
+    title = clean_api_text(row.get("title"))
+    status = clean_api_text(row.get("status")) or status_type
+    date = clean_api_text(row.get("submission_date") or row.get("created_at"))
+    link = clean_api_text(row.get("view_url") or row.get("edit_url"))
+    if not manuscript_id and not title:
+        return None
+    if manuscript_id:
+        key = manuscript_id.casefold()
+    else:
+        key_source = "|".join((title, status, date, link))
+        key = "row-" + hashlib.sha1(key_source.encode("utf-8")).hexdigest()[:16]
+    return Manuscript(
+        key=key,
+        manuscript_id=manuscript_id or key,
+        title=title or "未显示标题",
+        status=status,
+        date=date,
+        url=urllib.parse.urljoin(page_url, link) if link else "",
+    )
+
+
+def fetch_manuscripts_api(page_url: str, cookie: str, timeout: float) -> list[Manuscript]:
+    """通过当前 Vue 页面使用的 REST 接口抓取全部投稿状态。"""
+    origin = api_origin(page_url)
+    csrf_token = cookie_field(cookie, "Susy-Csrf-Token")
+    if not csrf_token:
+        raise RuntimeError("Cookie 中缺少 Susy-Csrf-Token，请从当前 MDPI 页面重新导出。")
+
+    referer = page_url
+    jwt_payload = fetch_api_json(
+        f"{origin}/user/ajax/refresh_api_jwt",
+        cookie,
+        csrf_token,
+        timeout,
+        referer=referer,
+    )
+    api_token = jwt_payload.get("token")
+    if not isinstance(api_token, str) or not api_token:
+        raise RuntimeError("MDPI API JWT 刷新失败，Cookie 可能已过期。")
+
+    manuscripts: dict[str, Manuscript] = {}
+    for status_type in API_STATUS_TYPES:
+        page = 1
+        while page <= 100:
+            query = urllib.parse.urlencode(
+                {
+                    "status_type": status_type,
+                    "current_page": page,
+                    "page_size": API_PAGE_SIZE,
+                }
+            )
+            payload = fetch_api_json(
+                f"{origin}/restapi/my_manuscript/list?{query}",
+                cookie,
+                csrf_token,
+                timeout,
+                api_token=api_token,
+                referer=referer,
+            )
+            if payload.get("success") is not True:
+                raise RuntimeError("MDPI 投稿接口返回失败。")
+            data = payload.get("data")
+            if not isinstance(data, dict):
+                raise RuntimeError("MDPI 投稿接口返回格式异常。")
+            rows = data.get("results", [])
+            if not isinstance(rows, list):
+                raise RuntimeError("MDPI 投稿接口的 results 格式异常。")
+            for row in rows:
+                manuscript = manuscript_from_api_row(row, status_type, page_url)
+                if manuscript is not None:
+                    manuscripts[manuscript.key] = manuscript
+
+            total = data.get("count")
+            if not rows or len(rows) < API_PAGE_SIZE:
+                break
+            if isinstance(total, int) and page * API_PAGE_SIZE >= total:
+                break
+            page += 1
+
+    return list(manuscripts.values())
+
+
+def is_retryable_error(exc: BaseException) -> bool:
+    """只把瞬时网络/服务端错误重试，认证和解析错误直接暴露。"""
+    message = str(exc).casefold()
+    transient_markers = (
+        "访问 mdpi 失败",
+        "访问 mdpi 新接口失败",
+        "timed out",
+        "timeout",
+        "connection reset",
+        "temporary failure",
+        "temporarily unavailable",
+        "http 429",
+        "http 500",
+        "http 502",
+        "http 503",
+        "http 504",
+    )
+    return any(marker in message for marker in transient_markers)
+
+
+def with_retries(operation: Callable[[], T], label: str) -> T:
+    """对 MDPI 瞬时握手/服务端错误做短退避重试。"""
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            return operation()
+        except (OSError, RuntimeError, ValueError) as exc:
+            if attempt >= RETRY_ATTEMPTS or not is_retryable_error(exc):
+                raise
+            delay = RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)]
+            now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+            print(
+                f"[{now}] {label}暂时失败，将在 {delay} 秒后重试（{attempt}/{RETRY_ATTEMPTS - 1}）："
+                f"{type(exc).__name__}",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise RuntimeError(f"{label}重试失败。")
 
 
 def _header_score(row: HTMLRow) -> int:
@@ -468,8 +705,27 @@ def looks_like_auth_error(status_code: int, final_url: str, page_html: str, reco
         return False
     lower_url = final_url.casefold()
     lower_html = page_html[:200_000].casefold()
-    auth_markers = ("/login", "sign in", "please log in", "login to", "susy login")
-    return any(marker in lower_url or marker in lower_html for marker in auth_markers)
+    # The current MDPI SSO flow may finish at auth.mdpi.com/authorize or show
+    # an Akamai access-denied page while still returning a 2xx response after
+    # redirects.  Treat those pages as authentication failures so the caller
+    # reports an actionable Cookie problem instead of a parser failure.
+    url_auth_markers = (
+        "/login",
+        "/authorize",
+        "auth.mdpi.com",
+    )
+    html_auth_markers = (
+        "sign in",
+        "please log in",
+        "login to",
+        "mdpi login",
+        "susy login",
+        "access denied",
+        "permission to access",
+    )
+    return any(marker in lower_url for marker in url_auth_markers) or any(
+        marker in lower_html for marker in html_auth_markers
+    )
 
 
 def load_state(path: Path) -> dict[str, dict[str, str]]:
@@ -580,18 +836,29 @@ def notify(
 
 def check_once(args: argparse.Namespace, cookie: str) -> int:
     """抓取一次状态页，对比基线并在有变化时推送；成功后刷新基线。"""
-    status_code, final_url, page_html = fetch_page(args.url, cookie, args.timeout)
+    status_code, final_url, page_html = with_retries(
+        lambda: fetch_page(args.url, cookie, args.timeout),
+        "MDPI 页面",
+    )
     records = extract_manuscripts(final_url, page_html)
     if looks_like_auth_error(status_code, final_url, page_html, records):
         raise RuntimeError(f"MDPI 返回 HTTP {status_code} 或登录页，Cookie 可能已过期，请重新导出。")
     if status_code < 200 or status_code >= 300:
         raise RuntimeError(f"MDPI 返回 HTTP {status_code}，暂不更新状态文件。")
+
+    source = "HTML"
     if not records and not any(marker in normalized(page_html) for marker in NO_MANUSCRIPT_MARKERS):
-        raise RuntimeError("页面抓取成功，但没有识别到投稿记录；可能是页面结构变化，暂不更新状态文件。")
+        # 当前 Submitted Manuscripts 页面是 Vue 壳，稿件表格由 REST API
+        # 异步加载；urllib 拿到的初始 HTML 本身不会包含任何 <tr>。
+        records = with_retries(
+            lambda: fetch_manuscripts_api(args.url, cookie, args.timeout),
+            "MDPI 新接口",
+        )
+        source = "REST API"
 
     old = load_state(args.state_file)
     changes, removed = detect_changes(old, records)
-    print(f"[{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}] 抓取成功。")
+    print(f"[{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}] 抓取成功（{source}）。")
     print_records(records)
 
     if not old:
