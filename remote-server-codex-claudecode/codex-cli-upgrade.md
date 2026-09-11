@@ -177,33 +177,58 @@ codex --version
 
 ---
 
-## 8. 升级后重启 Remote SSH 的 Codex 进程
+## 8. 升级后 Remote SSH 的 Codex 进程：重连即可，`pkill` 只是备选
 
-如果本地 Codex Desktop 正通过 SSH 使用远程服务器，升级 CLI 后，旧的 `app-server` 进程可能仍然在运行。
+**不是每次升级后都必须执行 `pkill`。**
 
-先检查：
+`pkill -f 'codex.*app-server' || true` 只是用来强制结束**升级前已经运行着的旧版远程 app-server**。
+
+可以按这个规则记：
+
+* 升级 Codex 时，Mac Codex **没有连接远程服务器** → 不需要 `pkill`
+* 升级时 Remote SSH **正在连接 / 正在使用** → 建议先在 Mac 端断开再重新连接；通常这样就够了
+* 重新连接后仍然异常、还在用旧进程、`waiting for network`、功能表现不对 → 再执行 `pkill`
+
+所以正常升级可以简化为：
 
 ```bash
-ps -ef | grep '[c]odex.*app-server'
+proxy_on && \
+npm install -g @openai/codex@latest && \
+hash -r && \
+codex --version
 ```
 
-如有旧进程，可以执行：
+升级成功后，Mac Codex 里：
+
+```text
+断开远程连接
+    ↓
+重新连接
+```
+
+**只有重新连接还不正常时**，服务器再执行：
 
 ```bash
 pkill -f 'codex.*app-server' || true
 ```
 
-然后在 Mac 本地 Codex 中：
+而且在执行前可先确认是否存在旧进程：
 
-```text
-断开远程服务器
-    ↓
-重新连接 SSH
-    ↓
-重新打开远程项目
+```bash
+ps -ef | grep '[c]odex.*app-server'
 ```
 
-这样 Remote SSH 会重新启动新版 Codex。
+> `pkill` 会直接终止当前正在运行的 Codex app-server。如果服务器上还有正在执行的远程 Codex 任务，**不要随手执行**。
+
+理解成两步走：
+
+```text
+正常升级：
+升级 CLI → 断开 / 重连 Remote SSH
+
+故障处理：
+升级 CLI → 重连仍异常 → pkill app-server → 再重连
+```
 
 ---
 
@@ -369,13 +394,15 @@ hash -r
 codex --version
 ```
 
-### Remote SSH 升级后重启
+### Remote SSH 升级后
+
+升级后先在 Mac Codex 里断开再重新连接远程服务器即可；**只有重连后仍异常**（还在用旧进程、`waiting for network`、功能表现不对）才执行：
 
 ```bash
 pkill -f 'codex.*app-server' || true
 ```
 
-然后在本地 Codex 中重新连接服务器。
+再重新连接服务器。
 
 ---
 
@@ -438,10 +465,6 @@ hash -r && \
 codex --version
 ```
 
-如果本地 Codex 正通过 Remote SSH 使用该服务器，升级完成后再执行：
+如果本地 Codex 正通过 Remote SSH 使用该服务器，升级完成后**断开再重新连接远程服务器**即可。
 
-```bash
-pkill -f 'codex.*app-server' || true
-```
-
-并重新连接远程服务器即可。
+`pkill -f 'codex.*app-server'` 不是必做步骤，只是「重连后仍异常」时的故障处理手段；服务器上还有正在执行的远程 Codex 任务时不要随手执行（见 [8](#8-升级后-remote-ssh-的-codex-进程重连即可pkill-只是备选)）。

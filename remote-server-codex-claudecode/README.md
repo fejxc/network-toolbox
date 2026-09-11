@@ -240,7 +240,7 @@ hash -r
 codex --version && which codex      # /opt/nodejs/bin/codex
 ```
 
-完整升级指南（含一键升级命令、升级后重启 Remote SSH 的 `app-server` 进程、models cache 报错处理、多版本共存检查）见 [codex-cli-upgrade.md](codex-cli-upgrade.md)。
+完整升级指南（含一键升级命令、升级后 Remote SSH 重连与 `pkill` 备选处理、models cache 报错处理、多版本共存检查）见 [codex-cli-upgrade.md](codex-cli-upgrade.md)。
 
 升级后仍是旧版本时，按序排查：
 
