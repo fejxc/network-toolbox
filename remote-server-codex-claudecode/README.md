@@ -240,6 +240,8 @@ hash -r
 codex --version && which codex      # /opt/nodejs/bin/codex
 ```
 
+完整升级指南（含一键升级命令、升级后重启 Remote SSH 的 `app-server` 进程、models cache 报错处理、多版本共存检查）见 [codex-cli-upgrade.md](codex-cli-upgrade.md)。
+
 升级后仍是旧版本时，按序排查：
 
 ```bash
@@ -603,6 +605,7 @@ chmod 700 /root/.claude && chmod 600 /root/.claude/settings.json
 | 容器代理 | `proxy_on` / `proxy_off`（[scripts/bashrc-proxy.sh](scripts/bashrc-proxy.sh)） |
 | Codex 认证 | `/root/.codex/auth.json`（600），来源 Mac 登录后 scp（[scripts/codex-config.example.toml](scripts/codex-config.example.toml)） |
 | Codex 代理（Remote SSH 场景） | `/root/.codex/.env`，Codex 启动自动读取（[codex-remote-ssh-proxy.md](codex-remote-ssh-proxy.md)） |
+| Codex CLI 升级 | `proxy_on && npm install -g @openai/codex@latest && hash -r`（[codex-cli-upgrade.md](codex-cli-upgrade.md)） |
 | Codex 一键脚本 | `/usr/local/bin/start-codex-full`（[scripts/start-codex-full.sh](scripts/start-codex-full.sh)） |
 | Claude Code 配置 | `/root/.claude/settings.json`（600），GLM 兼容接口（[scripts/claude-settings.example.json](scripts/claude-settings.example.json)） |
 | Claude 一键脚本 | `/usr/local/bin/start-claude-full`（[scripts/start-claude-full.sh](scripts/start-claude-full.sh)） |
