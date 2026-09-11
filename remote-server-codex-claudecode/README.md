@@ -341,6 +341,12 @@ codex
 2. 重新 `scp` 上传并在容器 `install -m 600` 落位（流程同 [5.2](#52-认证authjson-分发流程)）；
 3. 重启 Codex，`codex exec "只回复 OK"` 验证。
 
+### 5.7 Codex Desktop Remote SSH「Reconnecting / waiting for network」
+
+本地 Codex Desktop 通过 Remote SSH 连接后，SSH 与远程目录访问正常，但远程 Codex 反复 `Reconnecting... / waiting for network`。原因是 `proxy_on` 只作用于当前终端 Shell，Remote SSH 自动拉起的远程 `codex app-server` 不会继承代理变量。
+
+解决方案是给 Codex 配置专属代理文件 `/root/.codex/.env`（与 `proxy_on` 解耦，Codex 每次启动自动读取），完整过程见 [codex-remote-ssh-proxy.md](codex-remote-ssh-proxy.md)。
+
 ---
 
 ## 6. Claude Code
@@ -596,6 +602,7 @@ chmod 700 /root/.claude && chmod 600 /root/.claude/settings.json
 | 隧道一键脚本（跨平台） | `python3 scripts/start-tunnel.py`（[scripts/start-tunnel.py](scripts/start-tunnel.py)，另支持 `--stop` / `--status` / `--watch`） |
 | 容器代理 | `proxy_on` / `proxy_off`（[scripts/bashrc-proxy.sh](scripts/bashrc-proxy.sh)） |
 | Codex 认证 | `/root/.codex/auth.json`（600），来源 Mac 登录后 scp（[scripts/codex-config.example.toml](scripts/codex-config.example.toml)） |
+| Codex 代理（Remote SSH 场景） | `/root/.codex/.env`，Codex 启动自动读取（[codex-remote-ssh-proxy.md](codex-remote-ssh-proxy.md)） |
 | Codex 一键脚本 | `/usr/local/bin/start-codex-full`（[scripts/start-codex-full.sh](scripts/start-codex-full.sh)） |
 | Claude Code 配置 | `/root/.claude/settings.json`（600），GLM 兼容接口（[scripts/claude-settings.example.json](scripts/claude-settings.example.json)） |
 | Claude 一键脚本 | `/usr/local/bin/start-claude-full`（[scripts/start-claude-full.sh](scripts/start-claude-full.sh)） |
