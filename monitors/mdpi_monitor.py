@@ -26,6 +26,7 @@ import platform
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -320,6 +321,76 @@ def decode_http_body(raw: bytes, headers: object) -> str:
     return raw.decode(charset, errors="replace")
 
 
+def curl_http_request(url: str, headers: dict[str, str], timeout: float) -> tuple[int, str, bytes]:
+    """用 macOS 系统 curl 访问页面，规避旧版 Python/LibreSSL 的 TLS 兼容性。"""
+    cookie = headers.get("Cookie", "")
+    if not cookie:
+        raise RuntimeError("访问 MDPI 失败：缺少 Cookie。")
+
+    # 不把 Cookie 放进 curl 的进程参数；通过权限受限的临时 header 文件传入，
+    # 请求结束后立即删除。该文件不会进入仓库或日志。
+    fd, temp_name = tempfile.mkstemp(prefix=".mdpi-cookie-")
+    os.close(fd)
+    temp_path = Path(temp_name)
+    try:
+        temp_path.write_text(f"Cookie: {cookie}\n", encoding="utf-8")
+        try:
+            temp_path.chmod(0o600)
+        except OSError:
+            pass
+
+        seconds = max(1, int(timeout))
+        connect_seconds = max(1, min(seconds, 10))
+        command = [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--http1.1",
+            "--compressed",
+            "--connect-timeout",
+            str(connect_seconds),
+            "--max-time",
+            str(seconds),
+            "-H",
+            f"@{temp_path}",
+        ]
+        for name, value in headers.items():
+            if name == "Cookie":
+                continue
+            command.extend(("-H", f"{name}: {value}"))
+        command.extend(("-w", "\n__MDPI_CURL_META__%{http_code}\\t%{url_effective}", url))
+
+        try:
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=max(float(timeout) + 5.0, 10.0),
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError("访问 MDPI 失败：curl 请求超时或不可用。") from exc
+        if completed.returncode != 0:
+            raise RuntimeError(f"访问 MDPI 失败：curl 退出码 {completed.returncode}。")
+
+        marker = b"\n__MDPI_CURL_META__"
+        if marker not in completed.stdout:
+            raise RuntimeError("访问 MDPI 失败：curl 响应格式异常。")
+        body, metadata = completed.stdout.rsplit(marker, 1)
+        try:
+            status_text, final_url = metadata.strip().split(b"\t", 1)
+            status_code = int(status_text)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise RuntimeError("访问 MDPI 失败：curl 状态解析异常。") from exc
+        return status_code, final_url.decode("utf-8", errors="replace"), body
+    finally:
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+
+
 def fetch_page(url: str, cookie: str, timeout: float) -> tuple[int, str, str]:
     """带上浏览器请求头抓取状态页，返回 (状态码, 最终URL, 页面文本)。"""
     headers = {
@@ -344,7 +415,11 @@ def fetch_page(url: str, cookie: str, timeout: float) -> tuple[int, str, str]:
         body = exc.read()
         return exc.code, exc.geturl(), decode_http_body(body, exc.headers)
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"访问 MDPI 失败：{exc.reason}") from exc
+        try:
+            status_code, final_url, body = curl_http_request(url, headers, timeout)
+            return status_code, final_url, body.decode("utf-8", errors="replace")
+        except RuntimeError as curl_exc:
+            raise RuntimeError(f"访问 MDPI 失败：{exc.reason}") from curl_exc
 
 
 def cookie_field(cookie: str, name: str) -> str:
@@ -398,7 +473,11 @@ def fetch_api_json(
         body = decode_http_body(exc.read(), exc.headers)
         status_code = exc.code
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"访问 MDPI 新接口失败：{exc.reason}") from exc
+        try:
+            status_code, _final_url, raw_body = curl_http_request(url, headers, timeout)
+            body = raw_body.decode("utf-8", errors="replace")
+        except RuntimeError as curl_exc:
+            raise RuntimeError(f"访问 MDPI 新接口失败：{exc.reason}") from curl_exc
 
     if status_code < 200 or status_code >= 300:
         if status_code in {401, 403}:
