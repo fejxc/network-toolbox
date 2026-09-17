@@ -86,3 +86,39 @@ lpstat -W completed -o HP_P1108_192_168_0_105
 - 如果 Guest 被 Windows 禁止，使用 Windows 账户登录共享，不要把密码写入本文档。
 - 如果打印乱码，检查“使用”是否选成 `HP LaserJet Professional P1100`，不要使用普通 PostScript/PCL 驱动。
 - Mac 上的 P1108 驱动属于旧版 HP/Apple 驱动，现代 macOS 需要使用已修复版本；本文只记录连接方式，不保存安装包或管理员密码。
+
+## 七、macOS 大于 15.0 的驱动安装问题
+
+本实验室的 MacBook Pro 为 macOS 15.1.1（Apple Silicon）。Apple 官方 HP 驱动包中包含 P1108 所需的 `hp1100.ppd.gz` 和 `rastertozjs`，但安装器的 `Distribution` 文件把系统版本上限写成了 `15.0`。因此在 macOS 15.1 及更高版本上，原始安装器可能拒绝安装。[Apple HP 5.1.1 说明](https://support.apple.com/en-us/106385)
+
+实际处理过程：
+
+1. 从 Apple 官方 HP 驱动 DMG 中取出 `HewlettPackardPrinterDrivers.pkg`，并确认包签名为 Apple Software。
+2. 将 `Distribution` 中的版本门槛从 `15.0` 调整为更高版本，生成修复版安装包。
+3. 第一次安装还遇到 HP `preinstall` Perl 脚本的 `C.UTF-8` locale panic；将 `preinstall`、`postinstall` 及其 Perl 子脚本改为先使用 `LC_ALL=C`、`LANG=C`、`LC_CTYPE=C` 再执行，重新打包后安装成功。
+4. 修复只改变安装器检查和脚本运行环境，驱动载荷仍来自 Apple 官方包；因此修复包本身显示为未签名是预期结果。
+
+已验证的驱动文件：
+
+```text
+/Library/Printers/PPDs/Contents/Resources/hp1100.ppd.gz
+/Library/Printers/hp/laserjet/p1100_1560_1600series/hpRaster.bundle/Contents/MacOS/rastertozjs
+```
+
+后续在 macOS 15.1 及更高版本重装时，应使用经过上述处理的安装包；不要把管理员密码、Cookie 或修复包提交到 Git。
+
+## 八、最终修复包下载
+
+最终修复包（约 584 MB）已上传到百度网盘：
+
+[下载 HewlettPackardPrinterDrivers-P1108-fixed-locale.pkg](https://pan.baidu.com/s/1xhRA1yRT87wV62Hp_elvtg?pwd=8888)
+
+提取码：`8888`
+
+SHA-256：
+
+```text
+169a3a5d457713c76380eec485ac1918e6a68278e32aaaca3ad0c1251f9100b5
+```
+
+该文件是基于 Apple 官方 HP 驱动包生成的本地修复版，不要将安装包本体提交到 Git；Git 中只记录此下载链接和安装处理说明。
