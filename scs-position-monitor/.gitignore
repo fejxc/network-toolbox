@@ -1,0 +1,10 @@
+credentials.txt
+cookie.txt
+glm_key.txt
+dingtalk.txt
+state.json
+history.csv
+*.log
+captcha*.png
+deployment-captcha*.png
+__pycache__/
