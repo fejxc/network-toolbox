@@ -4,6 +4,8 @@ glm_key.txt
 dingtalk.txt
 state.json
 history.csv
+review_history.csv
+deploy-backups/
 *.log
 captcha*.png
 deployment-captcha*.png

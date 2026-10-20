@@ -23,6 +23,7 @@ import base64
 import csv
 import hashlib
 import hmac
+import html
 import http.cookiejar
 import json
 import os
@@ -55,6 +56,9 @@ CAPTCHA_PNG = BASE_DIR / "captcha.png"
 SITE = "http://bm.scs.gov.cn"
 API_PATH = "/pp/gkweb/web-gk-person-app/api/person/collection/getCollection"
 API_URL = SITE + API_PATH
+REVIEW_PATH = "/pp/gkweb/web-gk-person-app/api/person/getPersonExamInfo/10"
+REVIEW_HISTORY_CSV = BASE_DIR / "review_history.csv"
+REVIEW_STATUSES = {"1": "待审核", "2": "审核通过", "3": "审核不通过", "4": "退回补充材料"}
 LOGIN_PATH = "/pp/gkweb/api/person/idandmobile/login"
 LOGIN_URL = SITE + LOGIN_PATH
 TOKEN_PATH = "/pp/gkweb/prevent/token"
@@ -777,6 +781,14 @@ def try_relogin():
 # ---------- 请求与解析 ----------
 
 def fetch_collection(cookie_header):
+    return fetch_person_api(cookie_header, API_PATH)
+
+
+def fetch_review(cookie_header):
+    return fetch_person_api(cookie_header, REVIEW_PATH)
+
+
+def fetch_person_api(cookie_header, path):
     account = get_account(cookie_header) or "gk"
     ts = str(int(time.time() * 1000))
     headers = {
@@ -785,7 +797,7 @@ def fetch_collection(cookie_header):
         "Accept": "*/*",
         "Cookie": cookie_header,
         "X-MICRO-TIME": ts,
-        "X-HMAC-HASH": sign("GET", API_PATH, "", "", ts, account),
+        "X-HMAC-HASH": sign("GET", path, "", "", ts, account),
         "X-USER": account,
         "Mobile-Client": "0",
         "X-Requested-With": "",
@@ -793,7 +805,7 @@ def fetch_collection(cookie_header):
     tcode = cookie_value(cookie_header, "tcode")
     if tcode:
         headers["request-tcode"] = tcode
-    req = urllib.request.Request(API_URL, headers=headers)
+    req = urllib.request.Request(SITE + path, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8"))
@@ -840,10 +852,124 @@ def load_state():
     return {"positions": {}}
 
 
-def save_state(state):
-    state["updated"] = now()
+def save_state(state, update_time=True):
+    if update_time:
+        state["updated"] = now()
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2),
                           encoding="utf-8")
+    STATE_FILE.chmod(0o600)
+
+
+def extract_review(data):
+    """仅保留资格审查及报考职位信息，不存储接口返回的个人完整档案。"""
+    if not isinstance(data, dict) or data.get("flag") != "success":
+        raise ValueError("资格审查接口未返回成功结果")
+    person = data.get("person")
+    if not isinstance(person, dict) or "vhc10gkBk" not in person:
+        raise ValueError("资格审查接口缺少报考信息")
+    application = person.get("vhc10gkBk")
+    if application is not None and not isinstance(application, dict):
+        raise ValueError("报考信息格式异常")
+    if application and "vhc10gkscBk" not in person:
+        raise ValueError("资格审查接口缺少审核信息")
+    review = person.get("vhc10gkscBk")
+    position = person.get("vhb11Detail") or {}
+    if not isinstance(position, dict):
+        raise ValueError("报考职位格式异常")
+    if review is not None and not isinstance(review, dict):
+        raise ValueError("资格审查信息格式异常")
+    if review is None:
+        code = "not_submitted" if application else "not_applied"
+        label = "未提交资格审查" if application else "未报考"
+        review = {}
+    else:
+        code = str(review.get("ahc102") or "").strip()
+        if not code:
+            raise ValueError("资格审查接口缺少审核状态")
+        label = REVIEW_STATUSES.get(code, f"未知审核状态（{code}）")
+    review_time = review.get("ahc104")
+    if isinstance(review_time, (int, float)):
+        seconds = review_time / 1000 if review_time > 100000000000 else review_time
+        try:
+            review_time = datetime.fromtimestamp(seconds).strftime("%Y-%m-%d %H:%M:%S")
+        except (OverflowError, OSError, ValueError):
+            review_time = str(review_time)
+    return {
+        "status_code": code, "status": label,
+        "note": html.unescape(re.sub(r"<[^>]+>", "", str(review.get("ahc103") or ""))).strip(),
+        "review_time": str(review_time or ""),
+        "position_code": str(position.get("ahb110") or ""),
+        "position_name": str(position.get("ahb111") or ""),
+        "dept": str(position.get("ahd011") or ""),
+        "bureau": str(position.get("ahd020") or ""),
+    }
+
+
+def review_message(review, previous=None, checked_at=None, compared_at=None):
+    lines = [f"采集时间：{checked_at or now()}（北京时间）"]
+    if compared_at:
+        lines.append(f"对比时间：{compared_at}")
+    if review["position_name"] or review["position_code"]:
+        lines.append(f"报考职位：{review['position_name']}（{review['position_code']}）")
+    unit = " / ".join(dict.fromkeys(v for v in (review["dept"], review["bureau"]) if v))
+    if unit:
+        lines.append(f"单位：{unit}")
+    status = review["status"]
+    if previous and previous["status_code"] != review["status_code"]:
+        status = f"{previous['status']} → {status}"
+    lines.append(f"审核状态：{status}")
+    for key, label in (("review_time", "审核时间"), ("note", "审核说明")):
+        value = review[key]
+        if previous and previous.get(key) != value:
+            lines.append(f"{label}：{previous.get(key) or '无'} → {value or '无'}")
+        elif value:
+            lines.append(f"{label}：{value}")
+    return "\n".join(lines)
+
+
+def check_review(cookie, sound=True, initial=False):
+    status, data = fetch_review(cookie)
+    if status == 401 and try_relogin():
+        cookie = load_cookie(required=False)
+        if cookie:
+            status, data = fetch_review(cookie)
+    if status != 200:
+        log(f"资格审查查询失败：HTTP {status}，保留上次状态，稍后重试。")
+        return False
+    try:
+        review = extract_review(data)
+    except (ValueError, TypeError):
+        log("资格审查响应异常，保留上次状态，稍后重试。")
+        return False
+    state = load_state()
+    observed = state.get("review")
+    previous = state.get("review_notified")
+    checked_at = now()
+    if review != observed:
+        new_file = not REVIEW_HISTORY_CSV.exists() or REVIEW_HISTORY_CSV.stat().st_size == 0
+        fd = os.open(REVIEW_HISTORY_CSV, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            if new_file:
+                writer.writerow(["采集时间", "职位代码", "职位名称", "审核状态", "审核时间", "审核说明"])
+            writer.writerow([checked_at, review["position_code"], review["position_name"],
+                             review["status"], review["review_time"], review["note"]])
+    changed = previous is not None and review != previous
+    if initial or previous is None or changed:
+        title = "资格审查状态变化" if changed else "资格审查首次快照"
+        body = review_message(review, previous, checked_at, state.get("review_notified_at"))
+        if notify(title, body, sound=sound):
+            state["review_notified"] = review
+            state["review_notified_at"] = checked_at
+            log(f"资格审查推送成功：{review['status']}。")
+        else:
+            log("资格审查推送失败，下次查询将重试。")
+    else:
+        log(f"资格审查当前状态：{review['status']}（无变化）。")
+    state["review"] = review
+    state["review_checked_at"] = checked_at
+    save_state(state, update_time=False)
+    return changed
 
 
 def append_history(positions):
@@ -912,6 +1038,7 @@ def check_once(quiet=False, sound=True, initial=False) -> bool:
                 "或重新登录网页版后更新 cookie.txt。")
             notify("报名系统监控", "自动登录失败，请运行 monitor.py --login！", sound=sound)
             sys.exit(2)
+    review_changed = check_review(cookie, sound=sound, initial=initial) if cookie else False
     if status != 200 or data is None:
         log(f"请求失败：HTTP {status}，稍后重试。")
         sys.exit(1)
@@ -926,7 +1053,7 @@ def check_once(quiet=False, sound=True, initial=False) -> bool:
     positions = extract_positions(data)
     if not positions:
         log("收藏列表为空：请先在网页上收藏要监控的职位。")
-        return False
+        return review_changed
 
     flt = load_filter()
     if flt:
@@ -936,7 +1063,7 @@ def check_once(quiet=False, sound=True, initial=False) -> bool:
         positions = {c: p for c, p in positions.items() if c in flt}
         if not positions:
             log("过滤后没有可监控的职位，检查 positions.txt 里的职位代码。")
-            return False
+            return review_changed
 
     state = load_state()
     old = state.get("positions", {})
@@ -971,7 +1098,7 @@ def check_once(quiet=False, sound=True, initial=False) -> bool:
 
     state["positions"] = positions
     save_state(state)
-    return bool(changes)
+    return bool(changes) or review_changed
 
 
 def main():
