@@ -1,10 +1,12 @@
-# OpenWrt + WireGuard 远程回家 VPN（Mac / iPhone）
+# OpenWrt + WireGuard 远程回家 VPN（Mac / iPhone / Linux）
 
 > MacBook / iPhone 在外部网络中通过 WireGuard **Full Tunnel** 回到家中 OpenWrt 旁路由，再由 OpenWrt 上的 PassWall 按原有规则进行直连 / 代理分流。
 >
 > 本文由**实际验证成功**的配置整理而成，可作为长期部署与扩容的基准文档。
 >
 > **安全说明：本仓库不保存任何真实私钥。`PrivateKey` / `PublicKey` 一律使用占位符，真实密钥只保存在对应设备中。**
+>
+> **安全整改：2026-10-22 调试中 OpenWrt `WG_HOME` 服务端接口私钥曾被发送到聊天，应视为已暴露，必须完成轮换后再长期使用。处置步骤见 [linux-container-server.md](linux-container-server.md#9-密钥暴露整改)。**
 
 ## 目录
 
@@ -12,7 +14,7 @@
 - [2. 地址规划](#2-地址规划)
 - [3. 服务端部署（OpenWrt 旁路由）](#3-服务端部署openwrt-旁路由)
 - [4. 主路由端口转发与 DDNS](#4-主路由端口转发与-ddns)
-- [5. 客户端接入（Mac / iPhone / 新设备）](#5-客户端接入mac--iphone--新设备)
+- [5. 客户端接入（Mac / iPhone / Linux / 新设备）](#5-客户端接入mac--iphone--linux--新设备)
 - [6. DNS 与分流（PassWall / Clash Verge）](#6-dns-与分流passwall--clash-verge)
 - [7. 验证命令](#7-验证命令)
 - [8. 排障](#8-排障)
@@ -27,9 +29,11 @@
 flowchart TD
     MB["MacBook Pro<br/>10.66.66.2/32"]
     IP["iPhone<br/>10.66.66.3/32"]
+    LX["Linux 容器服务器<br/>10.66.66.4/32<br/>wireproxy"]
 
     MB -- "WireGuard Full Tunnel<br/>UDP 51820" --> DDNS
     IP -- "WireGuard Full Tunnel<br/>UDP 51820" --> DDNS
+    LX -- "用户态 WireGuard<br/>HTTP 127.0.0.1:7890" --> DDNS
 
     DDNS["家中 DDNS<br/>hz.fejxc.top:51820"]
     DDNS --> GW
@@ -55,6 +59,7 @@ flowchart TD
 | 层 | 职责 |
 |---|---|
 | 客户端（Mac / iPhone） | 只负责把全部 IPv4 流量送回家（Full Tunnel） |
+| Linux 容器服务器 | 只把显式访问 wireproxy 入口的 TCP 流量送回家，不改变默认路由 |
 | OpenWrt + PassWall | 决定哪些流量直连、哪些流量代理 |
 
 关键参数速查：
@@ -80,7 +85,8 @@ flowchart TD
 | OpenWrt WireGuard（WG_HOME） | `10.66.66.1/24` |
 | MacBook Pro | `10.66.66.2/32` |
 | iPhone | `10.66.66.3/32` |
-| 后续设备 | 从 `10.66.66.4/32` 起继续分配 |
+| Linux 容器服务器 | `10.66.66.4/32`（wireproxy 用户态接入） |
+| 后续设备 | 从 `10.66.66.5/32` 起继续分配 |
 
 > 公网 IPv4 可能动态变化，客户端**始终使用 DDNS**（`hz.fejxc.top`），不要写死公网 IP。
 
@@ -184,7 +190,7 @@ dig +short hz.fejxc.top
 
 ---
 
-## 5. 客户端接入（Mac / iPhone / 新设备）
+## 5. 客户端接入（Mac / iPhone / Linux / 新设备）
 
 ### 5.1 密钥原则
 
@@ -273,14 +279,22 @@ iPhone 必须使用**自己独立的密钥**和 `10.66.66.3/32`，不要复用 M
 | Peer | Allowed IPs | `0.0.0.0/0` |
 | Peer | Persistent Keepalive | `25` |
 
-### 5.4 新增设备
+### 5.4 Linux 容器服务器（wireproxy）
 
-以 Mac mini（`10.66.66.4/32`）为例：
+无 `NET_ADMIN`、无 `/dev/net/tun`、不能创建 network namespace 的 Linux 容器服务器，不能使用 `wg-quick`。使用纯用户态 `wireproxy` 暴露本机 HTTP / SOCKS5 入口，不创建系统接口，也不改变默认路由。
 
-- OpenWrt：新增 Peer，`PublicKey = <MAC_MINI_PUBLIC_KEY>`、`AllowedIPs = 10.66.66.4/32`；
+Linux 分配 `10.66.66.4/32`；HTTP 入口为 `127.0.0.1:7890`，备用 SOCKS5 入口为 `127.0.0.1:27890`，健康入口为 `127.0.0.1:27892`。
+
+详细部署、运维脚本、健康检查、容器边界和密钥轮换整改见 [linux-container-server.md](linux-container-server.md)；配置模板见 [clients/linux-server-wireproxy.conf.example](clients/linux-server-wireproxy.conf.example)。
+
+### 5.5 新增设备
+
+以 Mac mini（`10.66.66.5/32`）为例：
+
+- OpenWrt：新增 Peer，`PublicKey = <MAC_MINI_PUBLIC_KEY>`、`AllowedIPs = 10.66.66.5/32`；
 - 客户端：复制 [clients/new-device.conf.template](clients/new-device.conf.template)，替换密钥与地址。
 
-规律：OpenWrt 固定为 `10.66.66.1/24`，每个客户端单独分配一个 `/32`。
+规律：OpenWrt 固定为 `10.66.66.1/24`，Linux 已占用 `10.66.66.4/32`，后续每个客户端单独分配一个 `/32`。
 
 ---
 
@@ -395,8 +409,11 @@ MTU = 1380
 OpenWrt PrivateKey
 Mac PrivateKey
 iPhone PrivateKey
+Linux PrivateKey
 PresharedKey（如果未来启用）
 ```
+
+2026-10-22 的 `WG_HOME` 服务端接口私钥调试暴露整改清单见 [linux-container-server.md](linux-container-server.md#9-密钥暴露整改)。
 
 ### 9.2 IPv6 泄漏
 
@@ -436,5 +453,7 @@ AllowedIPs = 0.0.0.0/0, ::/0
 | OpenWrt | LAN `192.168.0.254/24`，网关 `192.168.0.1`；`WG_HOME` `10.66.66.1/24`，Listen `51820`，防火墙区域 `lan` |
 | OpenWrt · Mac Peer | `PublicKey = <MAC_PUBLIC_KEY>`，`AllowedIPs = 10.66.66.2/32` |
 | OpenWrt · iPhone Peer | `PublicKey = <IPHONE_PUBLIC_KEY>`，`AllowedIPs = 10.66.66.3/32` |
+| OpenWrt · Linux Peer | `PublicKey = <LINUX_PUBLIC_KEY>`，`AllowedIPs = 10.66.66.4/32` |
 | Mac 客户端 | `Address = 10.66.66.2/32`，`DNS = 10.66.66.1`，`AllowedIPs = 0.0.0.0/0`，`Keepalive = 25` |
 | iPhone 客户端 | `Address = 10.66.66.3/32`，`DNS = 10.66.66.1`，`AllowedIPs = 0.0.0.0/0`，`Keepalive = 25` |
+| Linux wireproxy | `Address = 10.66.66.4/32`，HTTP `127.0.0.1:7890`，SOCKS5 `127.0.0.1:27890`，健康 `127.0.0.1:27892` |

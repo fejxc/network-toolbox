@@ -1,0 +1,31 @@
+# Linux 容器服务器 wireproxy 模板（v1.1.2）
+#
+# 使用步骤：
+#   1. 生成密钥：wg genkey | tee privatekey | wg pubkey > publickey
+#   2. OpenWrt WG_HOME 新增 Peer：PublicKey = Linux 公钥，AllowedIPs = 10.66.66.4/32
+#   3. 替换下方占位符；真实配置保存到 /root/.config/wireproxy/wireproxy.conf
+#
+# 安全提醒：
+#   - 真实配置权限必须是 600，不能放回本仓库、不能截图分享。
+#   - 服务端 Peer 不填 Endpoint；由 Linux 主动连接 hz.fejxc.top。
+
+[Interface]
+Address = 10.66.66.4/32
+PrivateKey = <LINUX_PRIVATE_KEY>
+DNS = 10.66.66.1
+MTU = 1380
+# 健康检查通过 10.66.66.1 判断最近是否收到 pong
+CheckAlive = 10.66.66.1
+CheckAliveInterval = 5
+
+[Peer]
+PublicKey = <OPENWRT_WG_HOME_PUBLIC_KEY>
+Endpoint = hz.fejxc.top:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+
+[http]
+BindAddress = 127.0.0.1:7890
+
+[Socks5]
+BindAddress = 127.0.0.1:27890

@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# wireproxy 用户态 WireGuard 管理模板。
+# 复制到服务器后按实际路径替换常量；不要在脚本中写入私钥。
+
+set -euo pipefail
+
+WIREPROXY="/root/.local/lib/wireproxy-1.1.2/wireproxy"
+CONFIG="/root/.config/wireproxy/wireproxy.conf"
+RUN_DIR="/root/.local/run/wireproxy"
+STATE_DIR="/root/.local/state/wireproxy"
+PID_FILE="${RUN_DIR}/wireproxy.pid"
+LOG_FILE="${STATE_DIR}/wireproxy.log"
+HTTP_PROXY_URL="http://127.0.0.1:7890"
+HEALTH_URL="http://127.0.0.1:27892/readyz"
+WATCH_INTERVAL=5
+
+usage() {
+    cat <<'EOF'
+Usage: wireproxy.sh {start|stop|restart|status|check|logs|watch}
+EOF
+}
+
+is_running() {
+    [[ -r "$PID_FILE" ]] || return 1
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null)" || return 1
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    # 仅识别由本脚本和本二进制启动的进程，避免误杀无关程序。
+    tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null | grep -Fq "$WIREPROXY"
+}
+
+prepare() {
+    [[ -x "$WIREPROXY" ]] || { echo "wireproxy not executable: $WIREPROXY" >&2; exit 1; }
+    [[ -f "$CONFIG" ]] || { echo "config not found: $CONFIG" >&2; exit 1; }
+    stat -c '%a' "$CONFIG" | grep -Eq '^[46]00$' || {
+        echo "config permission must be 600: $CONFIG" >&2
+        exit 1
+    }
+    "$WIREPROXY" -c "$CONFIG" -n >/dev/null
+    install -d -m 700 "$RUN_DIR" "$STATE_DIR"
+    touch "$LOG_FILE"
+    chmod 600 "$LOG_FILE" "$PID_FILE" 2>/dev/null || true
+}
+
+start_process() {
+    if is_running; then
+        echo "wireproxy already running (pid $(cat "$PID_FILE"))"
+        return 0
+    fi
+
+    rm -f "$PID_FILE"
+    nohup "$WIREPROXY" -c "$CONFIG" -i 127.0.0.1:27892 >>"$LOG_FILE" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$PID_FILE"
+    chmod 600 "$PID_FILE"
+
+    for _ in $(seq 1 20); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$PID_FILE"
+            echo "wireproxy exited during startup; see $LOG_FILE" >&2
+            return 1
+        fi
+        if curl -fsS --max-time 1 "$HEALTH_URL" >/dev/null 2>&1; then
+            echo "wireproxy started (pid $pid)"
+            return 0
+        fi
+        sleep 1
+    done
+
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "wireproxy process is running, but $HEALTH_URL is not ready" >&2
+        return 1
+    fi
+    rm -f "$PID_FILE"
+    echo "wireproxy exited before becoming healthy; see $LOG_FILE" >&2
+    return 1
+}
+
+stop_process() {
+    if ! is_running; then
+        rm -f "$PID_FILE"
+        echo "wireproxy is not running"
+        return 0
+    fi
+
+    local pid
+    pid="$(cat "$PID_FILE")"
+    kill "$pid"
+    for _ in $(seq 1 20); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.5
+    done
+
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+    echo "wireproxy stopped"
+}
+
+status() {
+    if is_running; then
+        echo "running: pid $(cat "$PID_FILE")"
+    else
+        echo "stopped"
+    fi
+    if curl -fsS --max-time 2 "$HEALTH_URL" >/dev/null 2>&1; then
+        echo "health: ready"
+    else
+        echo "health: not ready"
+    fi
+    curl -fsS --max-time 2 "${HEALTH_URL%/readyz}/metrics" 2>/dev/null | sed -n '1,40p' || true
+}
+
+check() {
+    local code
+    code="$(curl --proxy "$HTTP_PROXY_URL" \
+        -o /dev/null -sS --connect-timeout 5 --max-time 15 \
+        -w '%{http_code}' https://api.openai.com/v1/models)" || {
+        echo "proxy check failed" >&2
+        return 1
+    }
+    # 401 是未带 API 凭据时的预期响应，说明 TLS 和代理链路可达。
+    case "$code" in
+        200|401|403) echo "proxy check ok: HTTP $code" ;;
+        *) echo "proxy check returned HTTP $code" >&2; return 1 ;;
+    esac
+}
+
+watch() {
+    trap 'echo "watch stopped; wireproxy left running"' INT TERM
+    while true; do
+        if ! is_running; then
+            echo "$(date '+%F %T') wireproxy is down; restarting"
+            start_process || true
+        fi
+        sleep "$WATCH_INTERVAL"
+    done
+}
+
+case "${1:-}" in
+    start) prepare; start_process ;;
+    stop) stop_process ;;
+    restart) stop_process; prepare; start_process ;;
+    status) status ;;
+    check) check ;;
+    logs) tail -n 100 "$LOG_FILE" ;;
+    watch) prepare; watch ;;
+    *) usage >&2; exit 2 ;;
+esac
