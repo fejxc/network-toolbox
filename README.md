@@ -8,6 +8,10 @@
 - [浙江理工大学校园网](zstu/README.md)：Mac ePortal、路由器版和掉线自动重登。
 - [OpenWrt + WireGuard 远程回家 VPN](openwrt-wireguard/README.md)：Mac/iPhone Full Tunnel 回家，由家中 OpenWrt + PassWall 分流。
 
+## 排障记录
+
+- [语雀定向拦截排查与 Clash 覆写规则修复](yuque-access-fix/README.md)：单站不通的完整排查链路（DNS 丢包 + 直连黑洞），用档案 override.appendRules 持久化代理规则。
+
 ## 监控与远程开发
 
 - [监控脚本与钉钉通知](monitors/README.md)：MDPI 投稿状态监控；钉钉通知框架同目录复用，新监控接入即用。
