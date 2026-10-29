@@ -1040,10 +1040,17 @@ def check_once(quiet=False, sound=True, initial=False) -> bool:
             sys.exit(2)
     review_changed = check_review(cookie, sound=sound, initial=initial) if cookie else False
     if status != 200 or data is None:
-        log(f"请求失败：HTTP {status}，稍后重试。")
-        sys.exit(1)
+        log(f"收藏职位查询失败：HTTP {status}；资格审查已独立查询，下个周期重试。")
+        return review_changed
     if data.get("collectFlag") != "1":
         flag = data.get("flag", "未知错误")
+        if flag == "报考已结束":
+            state = load_state()
+            if not state.get("collection_ended"):
+                log("报名已结束，停止更新收藏人数；继续监控资格审查状态。")
+            state["collection_ended"] = True
+            save_state(state)
+            return review_changed
         log(f"接口返回异常：{flag}")
         if "登录" in str(flag) or "login" in str(flag).lower():
             notify("报名系统监控", "登录已失效，请更新 cookie.txt！", sound=sound)
